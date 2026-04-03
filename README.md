@@ -29,13 +29,21 @@ docker-compose up --build
 
 Open http://localhost:8000 in your browser.
 
-### Development
+### Local Development
+
+> **Python 3.12 is recommended.** Python 3.14 may have compatibility issues with some packages that have not yet released wheels. All dependencies are pure-Python or have pre-built wheels — no GDAL or C library installation required.
 
 **Backend:**
 ```bash
 cd backend
 python -m venv .venv
+
+# Windows
+.venv\Scripts\activate
+
+# macOS/Linux
 source .venv/bin/activate
+
 pip install -r requirements.txt
 uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
@@ -47,11 +55,15 @@ pnpm install
 pnpm dev
 ```
 
+### Terrain Data
+
+SRTM elevation tiles are downloaded automatically on first use from the AWS Terrain Tiles service. Tiles are cached locally in `./srtm_cache/` (configurable via `SRTM_CACHE_DIR` environment variable). No manual setup or API keys required.
+
 ## Architecture
 
 - **Frontend**: Vue 3 + TypeScript + Vite + Leaflet.js
 - **Backend**: Python FastAPI + uvicorn
-- **Terrain**: NASA SRTM tiles via srtm4/rasterio (auto-downloaded, cached)
+- **Terrain**: NASA SRTM HGT tiles (auto-downloaded, pure-Python reader with numpy)
 - **Database**: SQLite via SQLAlchemy
 - **Deployment**: Docker + docker-compose
 
