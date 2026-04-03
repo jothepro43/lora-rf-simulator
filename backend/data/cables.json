@@ -1,0 +1,51 @@
+{
+  "lmr400": {
+    "name": "LMR-400",
+    "loss_db_per_meter": 0.068,
+    "frequency_mhz": 915,
+    "connector_loss_db": 0.5,
+    "description": "Low-loss coaxial, popular for fixed installations"
+  },
+  "lmr600": {
+    "name": "LMR-600",
+    "loss_db_per_meter": 0.043,
+    "frequency_mhz": 915,
+    "connector_loss_db": 0.5,
+    "description": "Very low-loss coaxial for long runs"
+  },
+  "lmr200": {
+    "name": "LMR-200",
+    "loss_db_per_meter": 0.131,
+    "frequency_mhz": 915,
+    "connector_loss_db": 0.5,
+    "description": "Moderate-loss flexible coaxial"
+  },
+  "rg58": {
+    "name": "RG-58",
+    "loss_db_per_meter": 0.262,
+    "frequency_mhz": 915,
+    "connector_loss_db": 0.5,
+    "description": "Common thin coaxial, high loss at UHF"
+  },
+  "rg8x": {
+    "name": "RG-8X",
+    "loss_db_per_meter": 0.164,
+    "frequency_mhz": 915,
+    "connector_loss_db": 0.5,
+    "description": "Mini-8 flexible coaxial"
+  },
+  "ufl_pigtail": {
+    "name": "U.FL/IPEX Pigtail",
+    "loss_db_per_meter": 0.5,
+    "frequency_mhz": 915,
+    "connector_loss_db": 0.3,
+    "description": "Short pigtail adapter, typically 10-15cm"
+  },
+  "ideal": {
+    "name": "Ideal (Lossless)",
+    "loss_db_per_meter": 0.0,
+    "frequency_mhz": 915,
+    "connector_loss_db": 0.0,
+    "description": "No cable loss (antenna directly connected)"
+  }
+}

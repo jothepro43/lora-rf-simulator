@@ -1,0 +1,92 @@
+{
+  "SHORT_TURBO": {
+    "name": "Short Turbo",
+    "spreading_factor": 7,
+    "bandwidth_khz": 500,
+    "coding_rate": "4/5",
+    "sensitivity_dbm": -126,
+    "data_rate_bps": 21875,
+    "max_payload_bytes": 233,
+    "description": "Fastest, shortest range"
+  },
+  "SHORT_FAST": {
+    "name": "Short Fast",
+    "spreading_factor": 7,
+    "bandwidth_khz": 250,
+    "coding_rate": "4/5",
+    "sensitivity_dbm": -129,
+    "data_rate_bps": 10937,
+    "max_payload_bytes": 233,
+    "description": "Fast data rate, short range"
+  },
+  "SHORT_SLOW": {
+    "name": "Short Slow",
+    "spreading_factor": 8,
+    "bandwidth_khz": 250,
+    "coding_rate": "4/5",
+    "sensitivity_dbm": -131.5,
+    "data_rate_bps": 6250,
+    "max_payload_bytes": 233,
+    "description": "Moderate data rate, short-medium range"
+  },
+  "MEDIUM_FAST": {
+    "name": "Medium Fast",
+    "spreading_factor": 9,
+    "bandwidth_khz": 250,
+    "coding_rate": "4/5",
+    "sensitivity_dbm": -134,
+    "data_rate_bps": 3515,
+    "max_payload_bytes": 233,
+    "description": "Balanced speed and range"
+  },
+  "MEDIUM_SLOW": {
+    "name": "Medium Slow",
+    "spreading_factor": 10,
+    "bandwidth_khz": 250,
+    "coding_rate": "4/5",
+    "sensitivity_dbm": -136.5,
+    "data_rate_bps": 1953,
+    "max_payload_bytes": 233,
+    "description": "Slower, longer range"
+  },
+  "LONG_FAST": {
+    "name": "Long Fast",
+    "spreading_factor": 11,
+    "bandwidth_khz": 250,
+    "coding_rate": "4/5",
+    "sensitivity_dbm": -139,
+    "data_rate_bps": 1066,
+    "max_payload_bytes": 233,
+    "description": "Default Meshtastic, good range"
+  },
+  "LONG_MODERATE": {
+    "name": "Long Moderate",
+    "spreading_factor": 11,
+    "bandwidth_khz": 125,
+    "coding_rate": "4/5",
+    "sensitivity_dbm": -142,
+    "data_rate_bps": 537,
+    "max_payload_bytes": 233,
+    "description": "Long range, moderate speed"
+  },
+  "LONG_SLOW": {
+    "name": "Long Slow",
+    "spreading_factor": 12,
+    "bandwidth_khz": 125,
+    "coding_rate": "4/5",
+    "sensitivity_dbm": -144.5,
+    "data_rate_bps": 292,
+    "max_payload_bytes": 233,
+    "description": "Very long range, slow"
+  },
+  "VERY_LONG_SLOW": {
+    "name": "Very Long Slow",
+    "spreading_factor": 12,
+    "bandwidth_khz": 62.5,
+    "coding_rate": "4/5",
+    "sensitivity_dbm": -147.5,
+    "data_rate_bps": 146,
+    "max_payload_bytes": 233,
+    "description": "Maximum range, very slow"
+  }
+}

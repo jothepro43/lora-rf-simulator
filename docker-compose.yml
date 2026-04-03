@@ -1,0 +1,19 @@
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - srtm_cache:/app/srtm_cache
+      - app_data:/app/data
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8000
+      - DATABASE_URL=sqlite:///./data/nodes.db
+      - SRTM_CACHE_DIR=./srtm_cache
+      - LOG_LEVEL=info
+    restart: unless-stopped
+
+volumes:
+  srtm_cache:
+  app_data:

@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+.venv/
+venv/
+env/
+
+# Node
+node_modules/
+frontend/dist/
+frontend/.vite/
+*.tsbuildinfo
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Environment
+.env
+.env.local
+
+# Data
+srtm_cache/
+data/nodes.db
+*.db
+
+# OS
+.DS_Store
+Thumbs.db
+
+# SRTM tiles
+*.hgt
+*.tif
+!backend/data/*.json
