@@ -9,6 +9,7 @@ const mapContainer = ref<HTMLDivElement>()
 let map: L.Map
 let markersLayer: L.LayerGroup
 let coverageLayer: L.LayerGroup
+let losMarkersLayer: L.LayerGroup
 let losLine: L.Polyline | null = null
 
 // Fix default marker icons
@@ -79,24 +80,30 @@ onMounted(() => {
 
   markersLayer = L.layerGroup().addTo(map)
   coverageLayer = L.layerGroup().addTo(map)
+  losMarkersLayer = L.layerGroup().addTo(map)
 
   // Map click handler
   map.on('click', async (e: L.LeafletMouseEvent) => {
     const { lat, lng: lon } = e.latlng
 
     if (store.activeMode === 'place') {
-      store.currentNode.lat = parseFloat(lat.toFixed(6))
-      store.currentNode.lon = parseFloat(lon.toFixed(6))
+      // Create a new node at the clicked location (spread to avoid mutation)
+      const newNode = {
+        ...store.currentNode,
+        id: undefined,
+        lat: parseFloat(lat.toFixed(6)),
+        lon: parseFloat(lon.toFixed(6)),
+        name: `Site ${store.nodes.length + 1}`,
+      }
 
-      // Save node
-      await store.saveNode({ ...store.currentNode })
-      store.activeMode = 'none'
+      await store.saveNode(newNode)
+      // Stay in place mode so user can keep adding nodes
       refreshMarkers()
     } else if (store.activeMode === 'los') {
       store.losPoints.push({ lat, lon })
       if (store.losPoints.length === 1) {
-        // Add temp marker
-        L.marker([lat, lon], { icon: towerIcon }).addTo(markersLayer)
+        // Add temp TX marker
+        L.marker([lat, lon], { icon: towerIcon }).addTo(losMarkersLayer)
       }
       if (store.losPoints.length === 2) {
         await runLoS()
@@ -165,7 +172,7 @@ async function runLoS() {
     ).addTo(map)
 
     // Add RX marker
-    L.marker([p2.lat, p2.lon], { icon: rxIcon }).addTo(markersLayer)
+    L.marker([p2.lat, p2.lon], { icon: rxIcon }).addTo(losMarkersLayer)
   } catch (err) {
     console.error('LoS simulation failed:', err)
   } finally {
@@ -217,7 +224,7 @@ watch(() => store.nodes, () => refreshMarkers(), { deep: true })
       </button>
       <button
         :class="{ active: store.activeMode === 'los' }"
-        @click="() => { store.activeMode = store.activeMode === 'los' ? 'none' : 'los'; store.losPoints = [] }"
+        @click="() => { store.activeMode = store.activeMode === 'los' ? 'none' : 'los'; store.losPoints = []; losMarkersLayer?.clearLayers(); if (losLine) { map.removeLayer(losLine); losLine = null; } store.terrainProfileOpen = false; store.losResult = null }"
         title="Click two points for LoS profile"
       >
         LoS Profile

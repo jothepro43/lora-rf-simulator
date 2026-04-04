@@ -7,13 +7,13 @@ const store = useStore()
 
 const sections = ref({
   site: true,
-  feeder: false,
-  antenna: false,
+  feeder: true,
+  antenna: true,
   receiver: false,
   model: false,
   environment: false,
   output: false,
-  nodes: false,
+  nodes: true,
 })
 
 function toggleSection(key: keyof typeof sections.value) {
@@ -88,6 +88,14 @@ const weatherOptions = [
     </div>
 
     <div v-if="store.sidebarOpen" class="sidebar-content">
+      <!-- Selected Node Indicator -->
+      <div v-if="store.selectedNodeId != null" class="selected-indicator">
+        <span>Editing: <strong>{{ store.currentNode.name }}</strong></span>
+        <button class="btn-new-node" @click="() => { store.selectedNodeId = null; Object.assign(store.currentNode, { id: undefined, name: 'Site', lat: 0, lon: 0, height_agl: 10, device_preset: 'rak4631', antenna_preset: 'rak_pcb_patch', cable_type: 'ideal', cable_length_m: 0, connectors: 0, frequency_mhz: 915, tx_power_dbm: 22, rx_sensitivity_dbm: -148, antenna_gain_dbi: 2.0, role: 'CLIENT', channel_preset: 'LONG_FAST', notes: '' }) }">
+          + New
+        </button>
+      </div>
+
       <!-- Site / TX Section -->
       <div class="section">
         <div class="section-header" @click="toggleSection('site')">
@@ -368,7 +376,7 @@ const weatherOptions = [
       <!-- Action Buttons -->
       <div class="actions">
         <button class="btn-save" @click="store.saveNode({ ...store.currentNode })" :disabled="store.currentNode.lat === 0">
-          Save Node
+          {{ store.currentNode.id ? 'Update Node' : 'Save Node' }}
         </button>
         <button class="btn-run" @click="runCoverage" :disabled="!store.nodes.length || store.loading">
           Run Coverage
@@ -627,6 +635,25 @@ const weatherOptions = [
   color: var(--text-muted);
   text-align: center;
   padding: 16px;
+}
+
+.selected-indicator {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 16px;
+  background: rgba(63, 185, 80, 0.1);
+  border-bottom: 1px solid var(--border-color);
+  font-size: 12px;
+  color: var(--accent-green);
+}
+
+.btn-new-node {
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  padding: 4px 10px;
+  font-size: 11px;
+  border: 1px solid var(--border-color);
 }
 
 @media (max-width: 900px) {
