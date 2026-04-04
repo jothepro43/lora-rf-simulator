@@ -19,9 +19,12 @@ logger = logging.getLogger(__name__)
 SRTM_CACHE_DIR = os.getenv("SRTM_CACHE_DIR", "./srtm_cache")
 os.makedirs(SRTM_CACHE_DIR, exist_ok=True)
 
-# SRTM 3 arc-second tiles: 1201x1201 samples
-HGT_SAMPLES = 1201
-HGT_BYTES = HGT_SAMPLES * HGT_SAMPLES * 2  # 16-bit signed integers
+# SRTM tiles can be 1 arc-second (3601x3601) or 3 arc-second (1201x1201)
+# The AWS Terrain Tiles serve 1 arc-second; we auto-detect from file size.
+HGT_SAMPLES_1AS = 3601
+HGT_SAMPLES_3AS = 1201
+HGT_BYTES_1AS = HGT_SAMPLES_1AS * HGT_SAMPLES_1AS * 2
+HGT_BYTES_3AS = HGT_SAMPLES_3AS * HGT_SAMPLES_3AS * 2
 VOID_VALUE = -32768
 
 # Base URL for SRTM tile downloads (OpenTopography SRTM GL3 mirror)
@@ -76,14 +79,15 @@ def _download_tile(tile_name: str) -> bool:
             # The response is gzip-compressed HGT data
             import gzip
             data = gzip.decompress(resp.content)
-            if len(data) == HGT_BYTES:
+            if len(data) in (HGT_BYTES_1AS, HGT_BYTES_3AS):
                 hgt_file.write_bytes(data)
-                logger.info(f"Cached SRTM tile {tile_name} ({len(data)} bytes)")
+                samples = HGT_SAMPLES_1AS if len(data) == HGT_BYTES_1AS else HGT_SAMPLES_3AS
+                logger.info(f"Cached SRTM tile {tile_name} ({len(data)} bytes, {samples}x{samples})")
                 return True
             else:
                 logger.warning(
                     f"Unexpected tile size for {tile_name}: {len(data)} bytes "
-                    f"(expected {HGT_BYTES})"
+                    f"(expected {HGT_BYTES_1AS} or {HGT_BYTES_3AS})"
                 )
         except httpx.HTTPStatusError as e:
             logger.debug(f"HTTP {e.response.status_code} for {url}")
@@ -111,12 +115,18 @@ def _load_tile(tile_name: str) -> np.ndarray | None:
         return None
 
     try:
-        with open(hgt_file, "rb") as f:
-            data = np.frombuffer(f.read(), dtype=">i2").reshape(
-                (HGT_SAMPLES, HGT_SAMPLES)
-            )
+        raw = hgt_file.read_bytes()
+        file_size = len(raw)
+        if file_size == HGT_BYTES_1AS:
+            samples = HGT_SAMPLES_1AS
+        elif file_size == HGT_BYTES_3AS:
+            samples = HGT_SAMPLES_3AS
+        else:
+            logger.error(f"Unknown HGT file size {file_size} for {tile_name}")
+            return None
+        data = np.frombuffer(raw, dtype=">i2").reshape((samples, samples))
         _tile_cache[tile_name] = data
-        logger.debug(f"Loaded tile {tile_name} into memory")
+        logger.debug(f"Loaded tile {tile_name} ({samples}x{samples}) into memory")
         return data
     except Exception as e:
         logger.error(f"Failed to read HGT file {hgt_file}: {e}")
@@ -128,21 +138,24 @@ def _read_elevation(tile_data: np.ndarray, lat: float, lon: float) -> float:
     lat_floor = math.floor(lat)
     lon_floor = math.floor(lon)
 
+    # Auto-detect resolution from tile shape
+    samples = tile_data.shape[0]
+
     # Position within the tile (0.0 to 1.0)
     lat_frac = lat - lat_floor
     lon_frac = lon - lon_floor
 
     # Convert to row/col (HGT tiles start from the NW corner)
-    # Row 0 = north edge, row 1200 = south edge
-    row_f = (1.0 - lat_frac) * (HGT_SAMPLES - 1)
-    col_f = lon_frac * (HGT_SAMPLES - 1)
+    # Row 0 = north edge, last row = south edge
+    row_f = (1.0 - lat_frac) * (samples - 1)
+    col_f = lon_frac * (samples - 1)
 
     row = int(row_f)
     col = int(col_f)
 
     # Clamp to valid range
-    row = max(0, min(row, HGT_SAMPLES - 2))
-    col = max(0, min(col, HGT_SAMPLES - 2))
+    row = max(0, min(row, samples - 2))
+    col = max(0, min(col, samples - 2))
 
     # Bilinear interpolation for smoother results
     dr = row_f - row
