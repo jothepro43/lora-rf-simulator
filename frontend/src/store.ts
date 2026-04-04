@@ -39,6 +39,8 @@ export const useStore = defineStore('main', () => {
     tx_power_dbm: 22,
     rx_sensitivity_dbm: -148,
     antenna_gain_dbi: 2.0,
+    antenna_azimuth_deg: 0,
+    antenna_tilt_deg: 0,
     role: 'CLIENT',
     channel_preset: 'LONG_FAST',
     notes: '',

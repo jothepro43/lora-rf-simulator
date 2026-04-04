@@ -12,6 +12,9 @@ from services.terrain import get_terrain_profile
 from services.propagation import (
     compute_path_loss,
     haversine_distance,
+    directional_gain_reduction,
+    bearing_between,
+    elevation_angle,
 )
 
 logger = logging.getLogger(__name__)
@@ -41,32 +44,32 @@ def _interpolate_colormap(anchors, n=256):
 # Precomputed LUTs for supported colormaps
 COLORMAP_LUTS = {
     "plasma": _interpolate_colormap([
-        (0.0,  (13,  8,   135, 180)),
-        (0.25, (126, 3,   168, 180)),
-        (0.5,  (204, 71,  120, 180)),
-        (0.75, (248, 149, 64,  180)),
-        (1.0,  (240, 249, 33,  180)),
+        (0.0,  (13,  8,   135, 255)),
+        (0.25, (126, 3,   168, 255)),
+        (0.5,  (204, 71,  120, 255)),
+        (0.75, (248, 149, 64,  255)),
+        (1.0,  (240, 249, 33,  255)),
     ]),
     "viridis": _interpolate_colormap([
-        (0.0,  (68,  1,   84,  180)),
-        (0.25, (59,  82,  139, 180)),
-        (0.5,  (33,  145, 140, 180)),
-        (0.75, (94,  201, 98,  180)),
-        (1.0,  (253, 231, 37,  180)),
+        (0.0,  (68,  1,   84,  255)),
+        (0.25, (59,  82,  139, 255)),
+        (0.5,  (33,  145, 140, 255)),
+        (0.75, (94,  201, 98,  255)),
+        (1.0,  (253, 231, 37,  255)),
     ]),
     "inferno": _interpolate_colormap([
-        (0.0,  (0,   0,   4,   180)),
-        (0.25, (87,  16,  110, 180)),
-        (0.5,  (188, 55,  84,  180)),
-        (0.75, (249, 142, 9,   180)),
-        (1.0,  (252, 255, 164, 180)),
+        (0.0,  (0,   0,   4,   255)),
+        (0.25, (87,  16,  110, 255)),
+        (0.5,  (188, 55,  84,  255)),
+        (0.75, (249, 142, 9,   255)),
+        (1.0,  (252, 255, 164, 255)),
     ]),
     "turbo": _interpolate_colormap([
-        (0.0,  (48,  18,  59,  180)),
-        (0.25, (30,  150, 242, 180)),
-        (0.5,  (115, 224, 76,  180)),
-        (0.75, (249, 168, 37,  180)),
-        (1.0,  (122, 4,   3,   180)),
+        (0.0,  (48,  18,  59,  255)),
+        (0.25, (30,  150, 242, 255)),
+        (0.5,  (115, 224, 76,  255)),
+        (0.75, (249, 168, 37,  255)),
+        (1.0,  (122, 4,   3,   255)),
     ]),
 }
 
@@ -107,9 +110,13 @@ def _compute_row(
     row_idx, lat, lons, tx_lat, tx_lon, tx_height_m, rx_height_m,
     frequency_mhz, k_factor, rain_rate_mmh, eirp_dbm, rx_gain_dbi,
     radius_m, num_profile_points,
+    antenna_azimuth_deg=0, antenna_tilt_deg=0,
+    antenna_h_beamwidth=360, antenna_v_beamwidth=90,
+    antenna_front_to_back_db=0, tx_height_asl=None,
 ):
     """Compute received power for every longitude in a single latitude row."""
     row_values = np.full(len(lons), -999.0)
+    is_directional = antenna_h_beamwidth < 360
     for col_idx, lon in enumerate(lons):
         dist = haversine_distance(tx_lat, tx_lon, lat, float(lon))
         if dist < 10 or dist > radius_m:
@@ -126,7 +133,22 @@ def _compute_row(
             k_factor,
             rain_rate_mmh=rain_rate_mmh,
         )
-        rx_power_dbm = eirp_dbm - path_loss["total_path_loss_db"] + rx_gain_dbi
+
+        dir_reduction = 0.0
+        if is_directional:
+            az = bearing_between(tx_lat, tx_lon, lat, float(lon))
+            rx_elev = profile["elevations"][-1] if profile["elevations"] else 0
+            tilt = elevation_angle(
+                tx_lat, tx_lon, tx_height_asl or 0,
+                lat, float(lon), rx_elev, rx_height_m,
+            )
+            dir_reduction = directional_gain_reduction(
+                az, antenna_azimuth_deg, antenna_tilt_deg, tilt,
+                antenna_h_beamwidth, antenna_v_beamwidth,
+                antenna_front_to_back_db,
+            )
+
+        rx_power_dbm = eirp_dbm - path_loss["total_path_loss_db"] + rx_gain_dbi - dir_reduction
         row_values[col_idx] = rx_power_dbm
     return row_idx, row_values
 
@@ -150,6 +172,11 @@ def generate_coverage(
     min_dbm: float = -130.0,
     max_dbm: float = -80.0,
     colormap: str = "plasma",
+    antenna_azimuth_deg: float = 0.0,
+    antenna_tilt_deg: float = 0.0,
+    antenna_h_beamwidth: float = 360.0,
+    antenna_v_beamwidth: float = 90.0,
+    antenna_front_to_back_db: float = 0.0,
 ) -> dict:
     """Generate coverage as a PNG image overlay.
 
@@ -169,6 +196,11 @@ def generate_coverage(
     lons = np.arange(lon_min, lon_max, lon_step)
 
     eirp_dbm = tx_power_dbm + tx_gain_dbi - cable_loss_db
+
+    # Get TX elevation for directional antenna calculations
+    from services.terrain import get_elevation
+    tx_elev = get_elevation(tx_lat, tx_lon)
+    tx_height_asl = tx_elev + tx_height_m
 
     num_rows = len(lats)
     num_cols = len(lons)
@@ -192,6 +224,9 @@ def generate_coverage(
                     tx_lat, tx_lon, tx_height_m, rx_height_m,
                     frequency_mhz, k_factor, rain_rate_mmh,
                     eirp_dbm, rx_gain_dbi, radius_m, num_profile_points,
+                    antenna_azimuth_deg, antenna_tilt_deg,
+                    antenna_h_beamwidth, antenna_v_beamwidth,
+                    antenna_front_to_back_db, tx_height_asl,
                 )
             )
 

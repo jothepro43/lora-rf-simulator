@@ -15,6 +15,8 @@ from models.database import init_db
 from api.nodes import router as nodes_router
 from api.simulate import router as simulate_router
 from api.terrain import router as terrain_router
+from api.export import router as export_router
+from api.mqtt import router as mqtt_router
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -52,6 +54,8 @@ app.add_middleware(
 app.include_router(nodes_router)
 app.include_router(simulate_router)
 app.include_router(terrain_router)
+app.include_router(export_router)
+app.include_router(mqtt_router)
 
 
 # Data catalog endpoints

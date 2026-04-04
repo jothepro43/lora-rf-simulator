@@ -24,6 +24,8 @@ class NodeCreate(BaseModel):
     tx_power_dbm: float = 22.0
     rx_sensitivity_dbm: float = -148.0
     antenna_gain_dbi: float = 2.0
+    antenna_azimuth_deg: float = 0.0
+    antenna_tilt_deg: float = 0.0
     role: str = "CLIENT"
     channel_preset: str = "LONG_FAST"
     notes: str = ""
@@ -43,6 +45,8 @@ class NodeUpdate(BaseModel):
     tx_power_dbm: Optional[float] = None
     rx_sensitivity_dbm: Optional[float] = None
     antenna_gain_dbi: Optional[float] = None
+    antenna_azimuth_deg: Optional[float] = None
+    antenna_tilt_deg: Optional[float] = None
     role: Optional[str] = None
     channel_preset: Optional[str] = None
     notes: Optional[str] = None
@@ -63,6 +67,8 @@ class NodeResponse(BaseModel):
     tx_power_dbm: float
     rx_sensitivity_dbm: float
     antenna_gain_dbi: float
+    antenna_azimuth_deg: float
+    antenna_tilt_deg: float
     role: str
     channel_preset: str
     notes: str

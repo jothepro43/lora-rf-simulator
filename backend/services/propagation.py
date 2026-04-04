@@ -243,6 +243,72 @@ def itm_approximation(
     return loss
 
 
+def directional_gain_reduction(
+    azimuth_to_point: float,
+    antenna_azimuth: float,
+    antenna_tilt: float,
+    tilt_to_point: float,
+    h_beamwidth: float,
+    v_beamwidth: float,
+    front_to_back_db: float,
+) -> float:
+    """Calculate gain reduction (dB) for a directional antenna based on pointing offset.
+
+    Returns 0 for omnidirectional antennas (h_beamwidth >= 360).
+    """
+    if h_beamwidth >= 360:
+        return 0.0
+
+    # Horizontal offset
+    h_offset = abs(azimuth_to_point - antenna_azimuth)
+    if h_offset > 180:
+        h_offset = 360 - h_offset
+
+    # Vertical offset
+    v_offset = abs(tilt_to_point - antenna_tilt)
+
+    h_half_bw = h_beamwidth / 2
+    v_half_bw = v_beamwidth / 2
+
+    # Horizontal reduction
+    if h_offset <= h_half_bw:
+        h_reduction = 12 * (h_offset / h_half_bw) ** 2
+    elif h_offset <= 90:
+        h_reduction = 12 + (h_offset - h_half_bw) / (90 - h_half_bw) * (front_to_back_db - 12)
+    else:
+        h_reduction = front_to_back_db
+
+    # Vertical reduction
+    if v_offset <= v_half_bw:
+        v_reduction = 12 * (v_offset / v_half_bw) ** 2
+    else:
+        v_reduction = min(30, 12 + (v_offset - v_half_bw) * 0.5)
+
+    return h_reduction + v_reduction
+
+
+def bearing_between(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Compass bearing (0-360) from point 1 to point 2."""
+    lat1, lon1, lat2, lon2 = map(math.radians, [lat1, lon1, lat2, lon2])
+    dlon = lon2 - lon1
+    x = math.sin(dlon) * math.cos(lat2)
+    y = math.cos(lat1) * math.sin(lat2) - math.sin(lat1) * math.cos(lat2) * math.cos(dlon)
+    brng = math.atan2(x, y)
+    return (math.degrees(brng) + 360) % 360
+
+
+def elevation_angle(
+    tx_lat: float, tx_lon: float, tx_height_asl: float,
+    rx_lat: float, rx_lon: float, rx_elev: float, rx_height_m: float,
+) -> float:
+    """Vertical angle (degrees) from TX to RX. Positive = upward."""
+    dist = haversine_distance(tx_lat, tx_lon, rx_lat, rx_lon)
+    if dist <= 0:
+        return 0.0
+    dh = (rx_elev + rx_height_m) - tx_height_asl
+    return math.degrees(math.atan2(dh, dist))
+
+
 def compute_path_loss(
     distances: list[float],
     elevations: list[float],

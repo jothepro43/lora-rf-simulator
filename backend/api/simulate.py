@@ -37,6 +37,11 @@ class CoverageRequest(BaseModel):
     min_dbm: float = -130.0
     max_dbm: float = -80.0
     colormap: str = "plasma"
+    antenna_azimuth_deg: float = 0.0
+    antenna_tilt_deg: float = 0.0
+    antenna_h_beamwidth: float = 360.0
+    antenna_v_beamwidth: float = 90.0
+    antenna_front_to_back_db: float = 0.0
 
 
 class LinkBudgetRequest(BaseModel):
@@ -105,6 +110,11 @@ def simulate_coverage(req: CoverageRequest):
         min_dbm=req.min_dbm,
         max_dbm=req.max_dbm,
         colormap=req.colormap,
+        antenna_azimuth_deg=req.antenna_azimuth_deg,
+        antenna_tilt_deg=req.antenna_tilt_deg,
+        antenna_h_beamwidth=req.antenna_h_beamwidth,
+        antenna_v_beamwidth=req.antenna_v_beamwidth,
+        antenna_front_to_back_db=req.antenna_front_to_back_db,
     )
 
 

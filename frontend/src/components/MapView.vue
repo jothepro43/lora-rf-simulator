@@ -225,6 +225,14 @@ async function runLoS() {
   }
 }
 
+function exportCurrentPNG() {
+  if (!store.coverageResult?.image_base64) return
+  const a = document.createElement('a')
+  a.href = `data:image/png;base64,${store.coverageResult.image_base64}`
+  a.download = 'coverage.png'
+  a.click()
+}
+
 function cancelCoverage() {
   if (store.coverageAbort) {
     store.coverageAbort.abort()
@@ -247,7 +255,7 @@ watch(() => store.coverageResult, (result) => {
   const imgUrl = `data:image/png;base64,${result.image_base64}`
   const bounds = result.bounds as [[number, number], [number, number]]
   coverageLayer = L.imageOverlay(imgUrl, bounds, {
-    opacity: store.displayParams.transparency / 100,
+    opacity: 1 - store.displayParams.transparency / 100,
     interactive: false,
   }).addTo(map)
 
@@ -257,7 +265,7 @@ watch(() => store.coverageResult, (result) => {
 // Watch transparency changes
 watch(() => store.displayParams.transparency, (val) => {
   if (coverageLayer) {
-    coverageLayer.setOpacity(val / 100)
+    coverageLayer.setOpacity(1 - val / 100)
   }
 })
 
@@ -291,6 +299,13 @@ watch(() => store.nodes, () => refreshMarkers(), { deep: true })
         title="Click two points for LoS profile"
       >
         LoS Profile
+      </button>
+      <button
+        v-if="store.coverageResult"
+        @click="exportCurrentPNG"
+        title="Download coverage image"
+      >
+        Export PNG
       </button>
     </div>
     <div v-if="store.activeMode === 'place'" class="map-hint">

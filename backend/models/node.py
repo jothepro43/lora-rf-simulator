@@ -20,6 +20,8 @@ class Node(Base):
     tx_power_dbm = Column(Float, default=22.0)
     rx_sensitivity_dbm = Column(Float, default=-148.0)
     antenna_gain_dbi = Column(Float, default=2.0)
+    antenna_azimuth_deg = Column(Float, default=0.0)
+    antenna_tilt_deg = Column(Float, default=0.0)
     role = Column(String, default="CLIENT")
     channel_preset = Column(String, default="LONG_FAST")
     notes = Column(String, default="")

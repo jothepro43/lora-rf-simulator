@@ -58,6 +58,8 @@ export interface NodeData {
   tx_power_dbm: number
   rx_sensitivity_dbm: number
   antenna_gain_dbi: number
+  antenna_azimuth_deg: number
+  antenna_tilt_deg: number
   role: string
   channel_preset: string
   notes: string
