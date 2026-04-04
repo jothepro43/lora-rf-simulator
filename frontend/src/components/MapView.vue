@@ -8,9 +8,10 @@ const store = useStore()
 const mapContainer = ref<HTMLDivElement>()
 let map: L.Map
 let markersLayer: L.LayerGroup
-let coverageLayer: L.LayerGroup
+let coverageLayer: L.ImageOverlay | null = null
 let losMarkersLayer: L.LayerGroup
 let losLine: L.Polyline | null = null
+let legendControl: L.Control | null = null
 
 // Fix default marker icons
 delete (L.Icon.Default.prototype as any)._getIconUrl
@@ -33,6 +34,49 @@ const rxIcon = L.divIcon({
   iconSize: [12, 12],
   iconAnchor: [6, 6],
 })
+
+// Colormap CSS gradients for legend
+const COLORMAP_GRADIENTS: Record<string, string> = {
+  plasma: 'linear-gradient(to right, rgb(13,8,135), rgb(126,3,168), rgb(204,71,120), rgb(248,149,64), rgb(240,249,33))',
+  viridis: 'linear-gradient(to right, rgb(68,1,84), rgb(59,82,139), rgb(33,145,140), rgb(94,201,98), rgb(253,231,37))',
+  inferno: 'linear-gradient(to right, rgb(0,0,4), rgb(87,16,110), rgb(188,55,84), rgb(249,142,9), rgb(252,255,164))',
+  turbo: 'linear-gradient(to right, rgb(48,18,59), rgb(30,150,242), rgb(115,224,76), rgb(249,168,37), rgb(122,4,3))',
+}
+
+function updateLegend() {
+  if (!map) return
+  if (legendControl) {
+    map.removeControl(legendControl)
+    legendControl = null
+  }
+  if (!store.coverageResult) return
+
+  const result = store.coverageResult
+  const colormap = result.colormap || store.displayParams.colormap
+  const gradient = COLORMAP_GRADIENTS[colormap] || COLORMAP_GRADIENTS.plasma
+
+  legendControl = new L.Control({ position: 'bottomright' })
+  legendControl.onAdd = () => {
+    const div = L.DomUtil.create('div', 'rf-legend')
+    div.innerHTML = `
+      <div style="background:rgba(22,27,34,0.92);padding:10px 14px;border-radius:6px;border:1px solid #30363d;color:#e6edf3;font-size:12px;min-width:180px;">
+        <div style="font-weight:600;margin-bottom:6px;">Signal Strength (dBm)</div>
+        <div style="height:14px;border-radius:3px;background:${gradient};margin-bottom:4px;"></div>
+        <div style="display:flex;justify-content:space-between;font-size:11px;color:#8b949e;">
+          <span>${result.min_dbm}</span>
+          <span>${Math.round((result.min_dbm + result.max_dbm) / 2)}</span>
+          <span>${result.max_dbm}</span>
+        </div>
+        ${result.stats && result.stats.cells_computed ? `
+        <div style="margin-top:6px;font-size:11px;color:#6e7681;">
+          ${result.stats.cells_computed} cells | ${result.stats.elapsed_seconds}s
+        </div>` : ''}
+      </div>
+    `
+    return div
+  }
+  legendControl.addTo(map)
+}
 
 onMounted(() => {
   if (!mapContainer.value) return
@@ -79,7 +123,6 @@ onMounted(() => {
   L.control.zoom({ position: 'topright' }).addTo(map)
 
   markersLayer = L.layerGroup().addTo(map)
-  coverageLayer = L.layerGroup().addTo(map)
   losMarkersLayer = L.layerGroup().addTo(map)
 
   // Map click handler
@@ -182,28 +225,39 @@ async function runLoS() {
   }
 }
 
-// Watch for coverage results
-watch(() => store.coverageResult, (result) => {
-  coverageLayer.clearLayers()
-  if (!result) return
+function cancelCoverage() {
+  if (store.coverageAbort) {
+    store.coverageAbort.abort()
+    store.coverageAbort = null
+    store.loading = false
+  }
+}
 
-  const colorMap: Record<string, string> = {
-    excellent: '#3fb950',
-    good: '#58a6ff',
-    marginal: '#d29922',
-    weak: '#f85149',
-    none: 'transparent',
+// Watch for coverage results – render as image overlay
+watch(() => store.coverageResult, (result) => {
+  if (coverageLayer) {
+    map.removeLayer(coverageLayer)
+    coverageLayer = null
+  }
+  if (!result || !result.image_base64) {
+    updateLegend()
+    return
   }
 
-  for (const p of result.points) {
-    if (p.level === 'none') continue
-    const color = colorMap[p.level] || '#888'
-    L.circleMarker([p.lat, p.lon], {
-      radius: Math.max(3, result.resolution_m / 50),
-      fillColor: color,
-      fillOpacity: 0.5,
-      stroke: false,
-    }).addTo(coverageLayer)
+  const imgUrl = `data:image/png;base64,${result.image_base64}`
+  const bounds = result.bounds as [[number, number], [number, number]]
+  coverageLayer = L.imageOverlay(imgUrl, bounds, {
+    opacity: store.displayParams.transparency / 100,
+    interactive: false,
+  }).addTo(map)
+
+  updateLegend()
+})
+
+// Watch transparency changes
+watch(() => store.displayParams.transparency, (val) => {
+  if (coverageLayer) {
+    coverageLayer.setOpacity(val / 100)
   }
 })
 
@@ -214,6 +268,15 @@ watch(() => store.nodes, () => refreshMarkers(), { deep: true })
 <template>
   <div class="map-wrapper">
     <div ref="mapContainer" class="map-container"></div>
+
+    <!-- Sidebar reopen button (shown when sidebar is collapsed) -->
+    <button
+      v-if="!store.sidebarOpen"
+      class="sidebar-reopen-btn"
+      @click="store.sidebarOpen = true"
+      title="Open sidebar"
+    >&#9654;</button>
+
     <div class="map-toolbar">
       <button
         :class="{ active: store.activeMode === 'place' }"
@@ -239,9 +302,14 @@ watch(() => store.nodes, () => refreshMarkers(), { deep: true })
     <div v-if="store.activeMode === 'los' && store.losPoints.length === 1" class="map-hint">
       Click RX point
     </div>
+
+    <!-- Loading overlay with cancel -->
     <div v-if="store.loading" class="map-loading">
-      <div class="spinner"></div>
-      Computing...
+      <div class="loading-content">
+        <div class="spinner"></div>
+        <span>Computing coverage...</span>
+        <button class="cancel-btn" @click="cancelCoverage">Cancel</button>
+      </div>
     </div>
   </div>
 </template>
@@ -258,10 +326,30 @@ watch(() => store.nodes, () => refreshMarkers(), { deep: true })
   background: var(--bg-primary);
 }
 
-.map-toolbar {
+.sidebar-reopen-btn {
   position: absolute;
   top: 12px;
   left: 12px;
+  z-index: 1001;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+  padding: 8px 10px;
+  font-size: 14px;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.sidebar-reopen-btn:hover {
+  background: var(--accent-green);
+  color: #000;
+  border-color: var(--accent-green);
+}
+
+.map-toolbar {
+  position: absolute;
+  top: 12px;
+  left: 60px;
   z-index: 1000;
   display: flex;
   gap: 8px;
@@ -299,11 +387,19 @@ watch(() => store.nodes, () => refreshMarkers(), { deep: true })
 
 .map-loading {
   position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
   z-index: 1000;
-  background: rgba(22, 27, 34, 0.9);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.loading-content {
+  background: rgba(22, 27, 34, 0.92);
   color: var(--text-primary);
   padding: 20px 30px;
   border-radius: 8px;
@@ -312,6 +408,23 @@ watch(() => store.nodes, () => refreshMarkers(), { deep: true })
   align-items: center;
   gap: 12px;
   font-size: 14px;
+  pointer-events: auto;
+}
+
+.cancel-btn {
+  background: var(--accent-red);
+  color: #fff;
+  border: none;
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 4px;
+  cursor: pointer;
+  margin-left: 8px;
+}
+
+.cancel-btn:hover {
+  opacity: 0.85;
 }
 
 .spinner {

@@ -1,8 +1,13 @@
-"""Coverage heatmap generation service."""
+"""Coverage heatmap generation service with PNG image output."""
 
 import math
+import time
 import logging
+import io
+import base64
+import concurrent.futures
 import numpy as np
+from PIL import Image
 from services.terrain import get_terrain_profile
 from services.propagation import (
     compute_path_loss,
@@ -10,6 +15,120 @@ from services.propagation import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Colormap LUT generation
+# ---------------------------------------------------------------------------
+
+def _interpolate_colormap(anchors, n=256):
+    """Interpolate RGBA anchors into an n-entry LUT (uint8)."""
+    positions = [a[0] for a in anchors]
+    colors = np.array([a[1] for a in anchors], dtype=np.float64)
+    lut = np.zeros((n, 4), dtype=np.uint8)
+    for i in range(n):
+        t = i / (n - 1)
+        # Find surrounding anchors
+        for j in range(len(positions) - 1):
+            if positions[j] <= t <= positions[j + 1]:
+                seg_t = (t - positions[j]) / (positions[j + 1] - positions[j])
+                rgba = colors[j] * (1 - seg_t) + colors[j + 1] * seg_t
+                lut[i] = np.clip(rgba, 0, 255).astype(np.uint8)
+                break
+    return lut
+
+
+# Precomputed LUTs for supported colormaps
+COLORMAP_LUTS = {
+    "plasma": _interpolate_colormap([
+        (0.0,  (13,  8,   135, 180)),
+        (0.25, (126, 3,   168, 180)),
+        (0.5,  (204, 71,  120, 180)),
+        (0.75, (248, 149, 64,  180)),
+        (1.0,  (240, 249, 33,  180)),
+    ]),
+    "viridis": _interpolate_colormap([
+        (0.0,  (68,  1,   84,  180)),
+        (0.25, (59,  82,  139, 180)),
+        (0.5,  (33,  145, 140, 180)),
+        (0.75, (94,  201, 98,  180)),
+        (1.0,  (253, 231, 37,  180)),
+    ]),
+    "inferno": _interpolate_colormap([
+        (0.0,  (0,   0,   4,   180)),
+        (0.25, (87,  16,  110, 180)),
+        (0.5,  (188, 55,  84,  180)),
+        (0.75, (249, 142, 9,   180)),
+        (1.0,  (252, 255, 164, 180)),
+    ]),
+    "turbo": _interpolate_colormap([
+        (0.0,  (48,  18,  59,  180)),
+        (0.25, (30,  150, 242, 180)),
+        (0.5,  (115, 224, 76,  180)),
+        (0.75, (249, 168, 37,  180)),
+        (1.0,  (122, 4,   3,   180)),
+    ]),
+}
+
+
+def get_colormap_lut(name: str) -> np.ndarray:
+    """Return a (256, 4) uint8 RGBA LUT for the named colormap."""
+    return COLORMAP_LUTS.get(name, COLORMAP_LUTS["plasma"])
+
+
+def power_to_image(grid, min_dbm=-130, max_dbm=-80, colormap="plasma", sensitivity=-130):
+    """Convert 2D power grid (rows x cols) to a base64-encoded RGBA PNG."""
+    rows, cols = grid.shape
+
+    # Normalize power values to 0..1
+    norm = (grid - min_dbm) / (max_dbm - min_dbm)
+    norm = np.clip(norm, 0, 1)
+
+    # Map to colormap indices
+    indices = (norm * 255).astype(np.uint8)
+    lut = get_colormap_lut(colormap)
+    rgba = lut[indices]  # shape (rows, cols, 4)
+
+    # Transparent where below sensitivity
+    no_signal = grid < sensitivity
+    rgba[no_signal, 3] = 0
+
+    img = Image.fromarray(rgba, "RGBA")
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return base64.b64encode(buf.getvalue()).decode()
+
+
+# ---------------------------------------------------------------------------
+# Coverage generation
+# ---------------------------------------------------------------------------
+
+def _compute_row(
+    row_idx, lat, lons, tx_lat, tx_lon, tx_height_m, rx_height_m,
+    frequency_mhz, k_factor, rain_rate_mmh, eirp_dbm, rx_gain_dbi,
+    radius_m, num_profile_points,
+):
+    """Compute received power for every longitude in a single latitude row."""
+    row_values = np.full(len(lons), -999.0)
+    for col_idx, lon in enumerate(lons):
+        dist = haversine_distance(tx_lat, tx_lon, lat, float(lon))
+        if dist < 10 or dist > radius_m:
+            continue
+        profile = get_terrain_profile(
+            tx_lat, tx_lon, lat, float(lon), num_profile_points
+        )
+        path_loss = compute_path_loss(
+            profile["distances"],
+            profile["elevations"],
+            tx_height_m,
+            rx_height_m,
+            frequency_mhz,
+            k_factor,
+            rain_rate_mmh=rain_rate_mmh,
+        )
+        rx_power_dbm = eirp_dbm - path_loss["total_path_loss_db"] + rx_gain_dbi
+        row_values[col_idx] = rx_power_dbm
+    return row_idx, row_values
 
 
 def generate_coverage(
@@ -28,90 +147,106 @@ def generate_coverage(
     k_factor: float = 4.0 / 3.0,
     rain_rate_mmh: float = 0.0,
     num_profile_points: int = 50,
+    min_dbm: float = -130.0,
+    max_dbm: float = -80.0,
+    colormap: str = "plasma",
 ) -> dict:
-    """Generate coverage heatmap data.
+    """Generate coverage as a PNG image overlay.
 
-    Returns a grid of received power levels around the TX point.
+    Returns base64-encoded PNG, Leaflet-style bounds, and summary stats.
     """
-    # Calculate grid parameters
     radius_m = radius_km * 1000.0
-    # Convert resolution to approximate degrees
-    lat_step = resolution_m / 111320.0  # meters per degree latitude
+    lat_step = resolution_m / 111320.0
     lon_step = resolution_m / (111320.0 * math.cos(math.radians(tx_lat)))
 
-    # Grid bounds
     lat_min = tx_lat - (radius_m / 111320.0)
     lat_max = tx_lat + (radius_m / 111320.0)
     lon_min = tx_lon - (radius_m / (111320.0 * math.cos(math.radians(tx_lat))))
     lon_max = tx_lon + (radius_m / (111320.0 * math.cos(math.radians(tx_lat))))
 
+    # Build coordinate arrays (south→north for image rows flipped later)
     lats = np.arange(lat_min, lat_max, lat_step)
     lons = np.arange(lon_min, lon_max, lon_step)
 
-    # EIRP
     eirp_dbm = tx_power_dbm + tx_gain_dbi - cable_loss_db
 
-    points = []
+    num_rows = len(lats)
+    num_cols = len(lons)
+    grid = np.full((num_rows, num_cols), -999.0)
 
-    for lat in lats:
-        for lon in lons:
-            dist = haversine_distance(tx_lat, tx_lon, lat, lon)
-            if dist < 10 or dist > radius_m:
-                continue
+    t0 = time.time()
+    logger.info(
+        "Coverage: %d rows x %d cols = %d cells, radius=%.1f km, res=%.0f m",
+        num_rows, num_cols, num_rows * num_cols, radius_km, resolution_m,
+    )
 
-            # Get terrain profile
-            profile = get_terrain_profile(
-                tx_lat, tx_lon, float(lat), float(lon), num_profile_points
+    # Multi-threaded row computation
+    max_workers = min(8, num_rows)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
+        futures = []
+        for row_idx, lat in enumerate(lats):
+            futures.append(
+                pool.submit(
+                    _compute_row,
+                    row_idx, float(lat), lons,
+                    tx_lat, tx_lon, tx_height_m, rx_height_m,
+                    frequency_mhz, k_factor, rain_rate_mmh,
+                    eirp_dbm, rx_gain_dbi, radius_m, num_profile_points,
+                )
             )
 
-            # Compute path loss
-            path_loss = compute_path_loss(
-                profile["distances"],
-                profile["elevations"],
-                tx_height_m,
-                rx_height_m,
-                frequency_mhz,
-                k_factor,
-                rain_rate_mmh=rain_rate_mmh,
-            )
+        done = 0
+        for future in concurrent.futures.as_completed(futures):
+            row_idx, row_values = future.result()
+            grid[row_idx] = row_values
+            done += 1
+            if done % max(1, num_rows // 10) == 0:
+                elapsed = time.time() - t0
+                rate = done / elapsed if elapsed > 0 else 0
+                remaining = (num_rows - done) / rate if rate > 0 else 0
+                logger.info(
+                    "  Progress: %d/%d rows (%.0f%%) – %.1fs elapsed, ~%.1fs remaining",
+                    done, num_rows, 100 * done / num_rows, elapsed, remaining,
+                )
 
-            # Received power
-            rx_power_dbm = eirp_dbm - path_loss["total_path_loss_db"] + rx_gain_dbi
+    elapsed = time.time() - t0
+    logger.info("Coverage complete in %.1fs", elapsed)
 
-            points.append({
-                "lat": round(float(lat), 6),
-                "lon": round(float(lon), 6),
-                "rx_power_dbm": round(rx_power_dbm, 1),
-                "path_loss_db": path_loss["total_path_loss_db"],
-                "distance_m": round(dist, 0),
-            })
+    # Flip grid so row 0 = north (image top = lat_max)
+    grid_flipped = grid[::-1]
 
-    # Determine signal levels for coloring
-    for p in points:
-        rx = p["rx_power_dbm"]
-        if rx >= rx_sensitivity_dbm + 20:
-            p["level"] = "excellent"
-        elif rx >= rx_sensitivity_dbm + 10:
-            p["level"] = "good"
-        elif rx >= rx_sensitivity_dbm + 3:
-            p["level"] = "marginal"
-        elif rx >= rx_sensitivity_dbm:
-            p["level"] = "weak"
-        else:
-            p["level"] = "none"
+    # Convert to PNG
+    image_base64 = power_to_image(
+        grid_flipped,
+        min_dbm=min_dbm,
+        max_dbm=max_dbm,
+        colormap=colormap,
+        sensitivity=rx_sensitivity_dbm,
+    )
+
+    # Stats
+    valid = grid[grid > -999]
+    stats = {}
+    if len(valid) > 0:
+        stats = {
+            "min_power_dbm": round(float(np.min(valid)), 1),
+            "max_power_dbm": round(float(np.max(valid)), 1),
+            "mean_power_dbm": round(float(np.mean(valid)), 1),
+            "cells_computed": int(len(valid)),
+            "cells_total": int(num_rows * num_cols),
+            "elapsed_seconds": round(elapsed, 1),
+        }
 
     return {
-        "points": points,
-        "bounds": {
-            "lat_min": float(lat_min),
-            "lat_max": float(lat_max),
-            "lon_min": float(lon_min),
-            "lon_max": float(lon_max),
-        },
+        "image_base64": image_base64,
+        "bounds": [[float(lat_min), float(lon_min)], [float(lat_max), float(lon_max)]],
+        "stats": stats,
         "resolution_m": resolution_m,
         "radius_km": radius_km,
         "eirp_dbm": round(eirp_dbm, 1),
         "tx_lat": tx_lat,
         "tx_lon": tx_lon,
-        "total_points": len(points),
+        "min_dbm": min_dbm,
+        "max_dbm": max_dbm,
+        "colormap": colormap,
     }

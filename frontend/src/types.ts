@@ -100,21 +100,26 @@ export interface PathLoss {
 }
 
 export interface CoverageResult {
-  points: CoveragePoint[]
-  bounds: { lat_min: number; lat_max: number; lon_min: number; lon_max: number }
+  image_base64: string
+  bounds: [[number, number], [number, number]]
+  stats: CoverageStats
   resolution_m: number
   radius_km: number
   eirp_dbm: number
-  total_points: number
+  tx_lat: number
+  tx_lon: number
+  min_dbm: number
+  max_dbm: number
+  colormap: string
 }
 
-export interface CoveragePoint {
-  lat: number
-  lon: number
-  rx_power_dbm: number
-  path_loss_db: number
-  distance_m: number
-  level: string
+export interface CoverageStats {
+  min_power_dbm: number
+  max_power_dbm: number
+  mean_power_dbm: number
+  cells_computed: number
+  cells_total: number
+  elapsed_seconds: number
 }
 
 export interface LinkBudgetResult {

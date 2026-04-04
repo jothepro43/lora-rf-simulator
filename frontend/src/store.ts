@@ -22,6 +22,7 @@ export const useStore = defineStore('main', () => {
   const coverageResult = ref<CoverageResult | null>(null)
   const loading = ref(false)
   const terrainProfileOpen = ref(false)
+  const coverageAbort = ref<AbortController | null>(null)
 
   // Current node being edited
   const currentNode = ref<NodeData>({
@@ -54,6 +55,14 @@ export const useStore = defineStore('main', () => {
     model: 'fspl_diffraction',
     environment: 'temperate',
     noise_floor_dbm: -120,
+  })
+
+  // Display parameters
+  const displayParams = ref({
+    min_dbm: -130,
+    max_dbm: -80,
+    colormap: 'plasma' as string,
+    transparency: 50,
   })
 
   const selectedNode = computed(() =>
@@ -124,8 +133,8 @@ export const useStore = defineStore('main', () => {
     devices, antennas, cables, channels,
     nodes, selectedNodeId, selectedNode,
     sidebarOpen, activeMode, losPoints, losResult, coverageResult,
-    loading, terrainProfileOpen,
-    currentNode, simParams,
+    loading, terrainProfileOpen, coverageAbort,
+    currentNode, simParams, displayParams,
     loadCatalogs, loadNodes, saveNode, deleteNode,
     applyDevicePreset, applyAntennaPreset, applyChannelPreset,
   }

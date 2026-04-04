@@ -13,6 +13,7 @@ const sections = ref({
   model: false,
   environment: false,
   output: false,
+  display: false,
   nodes: true,
 })
 
@@ -34,10 +35,27 @@ const eirp = computed(() => {
 
 const erpDbm = computed(() => eirp.value - 2.15)
 
+// Colormap CSS gradients for preview
+const COLORMAP_GRADIENTS: Record<string, string> = {
+  plasma: 'linear-gradient(to right, rgb(13,8,135), rgb(126,3,168), rgb(204,71,120), rgb(248,149,64), rgb(240,249,33))',
+  viridis: 'linear-gradient(to right, rgb(68,1,84), rgb(59,82,139), rgb(33,145,140), rgb(94,201,98), rgb(253,231,37))',
+  inferno: 'linear-gradient(to right, rgb(0,0,4), rgb(87,16,110), rgb(188,55,84), rgb(249,142,9), rgb(252,255,164))',
+  turbo: 'linear-gradient(to right, rgb(48,18,59), rgb(30,150,242), rgb(115,224,76), rgb(249,168,37), rgb(122,4,3))',
+}
+
+const currentGradient = computed(() => {
+  return COLORMAP_GRADIENTS[store.displayParams.colormap] || COLORMAP_GRADIENTS.plasma
+})
+
 async function runCoverage() {
   if (!store.nodes.length) return
   const node = store.selectedNode || store.nodes[0]
   store.loading = true
+
+  // Create abort controller
+  const controller = new AbortController()
+  store.coverageAbort = controller
+
   try {
     store.coverageResult = await api.simulateCoverage({
       tx_lat: node.lat,
@@ -54,11 +72,17 @@ async function runCoverage() {
       rx_height_m: store.simParams.rx_height_m,
       k_factor: store.simParams.k_factor,
       rain_rate_mmh: store.simParams.rain_rate_mmh,
-    })
-  } catch (err) {
-    console.error('Coverage simulation failed:', err)
+      min_dbm: store.displayParams.min_dbm,
+      max_dbm: store.displayParams.max_dbm,
+      colormap: store.displayParams.colormap,
+    }, controller.signal)
+  } catch (err: any) {
+    if (err.name !== 'AbortError') {
+      console.error('Coverage simulation failed:', err)
+    }
   } finally {
     store.loading = false
+    store.coverageAbort = null
   }
 }
 
@@ -81,7 +105,7 @@ const weatherOptions = [
 <template>
   <div class="sidebar" :class="{ collapsed: !store.sidebarOpen }">
     <div class="sidebar-header">
-      <h1 class="logo">LoRa RF Sim</h1>
+      <h1 v-if="store.sidebarOpen" class="logo">LoRa RF Sim</h1>
       <button class="toggle-btn" @click="store.sidebarOpen = !store.sidebarOpen">
         {{ store.sidebarOpen ? '\u25C0' : '\u25B6' }}
       </button>
@@ -373,6 +397,62 @@ const weatherOptions = [
         </div>
       </div>
 
+      <!-- Display Section -->
+      <div class="section">
+        <div class="section-header" @click="toggleSection('display')">
+          <span class="section-icon">&#127912;</span>
+          <span>Display</span>
+          <span class="chevron">{{ sections.display ? '\u25BC' : '\u25B6' }}</span>
+        </div>
+        <div v-if="sections.display" class="section-body">
+          <div class="field-row">
+            <label>Min dBm</label>
+            <div class="input-unit">
+              <input v-model.number="store.displayParams.min_dbm" type="number" min="-170" max="-50" step="5" />
+              <span class="unit">dBm</span>
+            </div>
+          </div>
+          <div class="field-row">
+            <label>Max dBm</label>
+            <div class="input-unit">
+              <input v-model.number="store.displayParams.max_dbm" type="number" min="-150" max="0" step="5" />
+              <span class="unit">dBm</span>
+            </div>
+          </div>
+          <div class="field-row">
+            <label>Color Scale</label>
+            <select v-model="store.displayParams.colormap">
+              <option value="plasma">Plasma</option>
+              <option value="viridis">Viridis</option>
+              <option value="inferno">Inferno</option>
+              <option value="turbo">Turbo</option>
+            </select>
+          </div>
+          <div class="field-row">
+            <label>Transparency</label>
+            <div class="slider-row">
+              <input
+                type="range"
+                v-model.number="store.displayParams.transparency"
+                min="0"
+                max="100"
+                step="5"
+                class="slider"
+              />
+              <span class="slider-value">{{ store.displayParams.transparency }}%</span>
+            </div>
+          </div>
+          <div class="gradient-preview">
+            <div class="gradient-bar" :style="{ background: currentGradient }"></div>
+            <div class="gradient-labels">
+              <span>{{ store.displayParams.min_dbm }}</span>
+              <span>{{ Math.round((store.displayParams.min_dbm + store.displayParams.max_dbm) / 2) }}</span>
+              <span>{{ store.displayParams.max_dbm }}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- Action Buttons -->
       <div class="actions">
         <button class="btn-save" @click="store.saveNode({ ...store.currentNode })" :disabled="store.currentNode.lat === 0">
@@ -426,7 +506,8 @@ const weatherOptions = [
 }
 
 .sidebar.collapsed {
-  width: 48px;
+  width: 0;
+  border-right: none;
 }
 
 .sidebar-header {
@@ -565,6 +646,71 @@ const weatherOptions = [
   color: var(--text-muted);
 }
 
+.slider-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  max-width: 180px;
+}
+
+.slider {
+  flex: 1;
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  background: var(--border-color);
+  border-radius: 2px;
+  outline: none;
+  border: none;
+  padding: 0;
+}
+
+.slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent-green);
+  cursor: pointer;
+}
+
+.slider::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent-green);
+  cursor: pointer;
+  border: none;
+}
+
+.slider-value {
+  font-size: 11px;
+  color: var(--text-muted);
+  min-width: 32px;
+  text-align: right;
+}
+
+.gradient-preview {
+  margin-top: 8px;
+  padding: 8px;
+  background: var(--bg-primary);
+  border-radius: 4px;
+}
+
+.gradient-bar {
+  height: 12px;
+  border-radius: 3px;
+  margin-bottom: 4px;
+}
+
+.gradient-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
 .actions {
   display: flex;
   gap: 8px;
@@ -667,7 +813,7 @@ const weatherOptions = [
 
   .sidebar.collapsed {
     width: 100%;
-    max-height: 48px;
+    max-height: 0;
   }
 }
 </style>

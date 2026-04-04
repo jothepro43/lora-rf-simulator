@@ -29,6 +29,7 @@ export const api = {
 
   // Simulation
   simulateLos: (data: any) => request<any>('/simulate/los', { method: 'POST', body: JSON.stringify(data) }),
-  simulateCoverage: (data: any) => request<any>('/simulate/coverage', { method: 'POST', body: JSON.stringify(data) }),
+  simulateCoverage: (data: any, signal?: AbortSignal) =>
+    request<any>('/simulate/coverage', { method: 'POST', body: JSON.stringify(data), signal }),
   simulateLinkBudget: (data: any) => request<any>('/simulate/link-budget', { method: 'POST', body: JSON.stringify(data) }),
 }

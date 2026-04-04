@@ -34,6 +34,9 @@ class CoverageRequest(BaseModel):
     rx_height_m: float = 1.5
     k_factor: float = 1.333
     rain_rate_mmh: float = 0.0
+    min_dbm: float = -130.0
+    max_dbm: float = -80.0
+    colormap: str = "plasma"
 
 
 class LinkBudgetRequest(BaseModel):
@@ -99,6 +102,9 @@ def simulate_coverage(req: CoverageRequest):
         rx_height_m=req.rx_height_m,
         k_factor=req.k_factor,
         rain_rate_mmh=req.rain_rate_mmh,
+        min_dbm=req.min_dbm,
+        max_dbm=req.max_dbm,
+        colormap=req.colormap,
     )
 
 
