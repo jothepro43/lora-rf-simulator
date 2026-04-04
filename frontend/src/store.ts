@@ -129,6 +129,14 @@ export const useStore = defineStore('main', () => {
     }
   }
 
+  function cancelCoverage() {
+    if (coverageAbort.value) {
+      coverageAbort.value.abort()
+      coverageAbort.value = null
+      loading.value = false
+    }
+  }
+
   return {
     devices, antennas, cables, channels,
     nodes, selectedNodeId, selectedNode,
@@ -137,5 +145,6 @@ export const useStore = defineStore('main', () => {
     currentNode, simParams, displayParams,
     loadCatalogs, loadNodes, saveNode, deleteNode,
     applyDevicePreset, applyAntennaPreset, applyChannelPreset,
+    cancelCoverage,
   }
 })

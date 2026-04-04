@@ -463,6 +463,26 @@ const weatherOptions = [
         </button>
       </div>
 
+      <!-- Coverage Stats -->
+      <div v-if="store.coverageResult?.stats" class="coverage-stats">
+        <div class="stats-row">
+          <span class="stats-label">Cells</span>
+          <span class="stats-value">{{ store.coverageResult.stats.cells_computed }} / {{ store.coverageResult.stats.cells_total }}</span>
+        </div>
+        <div class="stats-row">
+          <span class="stats-label">Signal Range</span>
+          <span class="stats-value">{{ store.coverageResult.stats.min_power_dbm }} to {{ store.coverageResult.stats.max_power_dbm }} dBm</span>
+        </div>
+        <div class="stats-row">
+          <span class="stats-label">Mean</span>
+          <span class="stats-value">{{ store.coverageResult.stats.mean_power_dbm }} dBm</span>
+        </div>
+        <div class="stats-row">
+          <span class="stats-label">Compute Time</span>
+          <span class="stats-value">{{ store.coverageResult.stats.elapsed_seconds }}s</span>
+        </div>
+      </div>
+
       <!-- Node List -->
       <div class="section">
         <div class="section-header" @click="toggleSection('nodes')">
@@ -732,6 +752,28 @@ const weatherOptions = [
   color: #000;
   padding: 10px;
   font-weight: 600;
+}
+
+.coverage-stats {
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-primary);
+}
+
+.stats-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  padding: 3px 0;
+}
+
+.stats-label {
+  color: var(--text-muted);
+}
+
+.stats-value {
+  color: var(--accent-teal);
+  font-weight: 500;
 }
 
 .node-item {
