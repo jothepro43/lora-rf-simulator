@@ -12,9 +12,9 @@ from services.terrain import get_terrain_profile
 from services.propagation import (
     compute_path_loss,
     haversine_distance,
-    directional_gain_reduction,
-    bearing_between,
+    bearing_from_coords,
     elevation_angle,
+    directional_gain_reduction,
 )
 
 logger = logging.getLogger(__name__)
@@ -110,9 +110,9 @@ def _compute_row(
     row_idx, lat, lons, tx_lat, tx_lon, tx_height_m, rx_height_m,
     frequency_mhz, k_factor, rain_rate_mmh, eirp_dbm, rx_gain_dbi,
     radius_m, num_profile_points,
-    antenna_azimuth_deg=0, antenna_tilt_deg=0,
-    antenna_h_beamwidth=360, antenna_v_beamwidth=90,
-    antenna_front_to_back_db=0, tx_height_asl=None,
+    antenna_azimuth_deg=0.0, antenna_tilt_deg=0.0,
+    antenna_h_beamwidth=360.0, antenna_v_beamwidth=90.0,
+    antenna_front_to_back_db=0.0,
 ):
     """Compute received power for every longitude in a single latitude row."""
     row_values = np.full(len(lons), -999.0)
@@ -133,22 +133,23 @@ def _compute_row(
             k_factor,
             rain_rate_mmh=rain_rate_mmh,
         )
+        rx_power_dbm = eirp_dbm - path_loss["total_path_loss_db"] + rx_gain_dbi
 
-        dir_reduction = 0.0
+        # Apply directional antenna gain reduction
         if is_directional:
-            az = bearing_between(tx_lat, tx_lon, lat, float(lon))
-            rx_elev = profile["elevations"][-1] if profile["elevations"] else 0
-            tilt = elevation_angle(
-                tx_lat, tx_lon, tx_height_asl or 0,
-                lat, float(lon), rx_elev, rx_height_m,
+            az_to_point = bearing_from_coords(tx_lat, tx_lon, lat, float(lon))
+            tilt_to_point = elevation_angle(
+                dist,
+                profile["elevations"][0] + tx_height_m,
+                profile["elevations"][-1] + rx_height_m,
             )
-            dir_reduction = directional_gain_reduction(
-                az, antenna_azimuth_deg, antenna_tilt_deg, tilt,
-                antenna_h_beamwidth, antenna_v_beamwidth,
+            reduction = directional_gain_reduction(
+                az_to_point, antenna_azimuth_deg, antenna_tilt_deg,
+                tilt_to_point, antenna_h_beamwidth, antenna_v_beamwidth,
                 antenna_front_to_back_db,
             )
+            rx_power_dbm -= reduction
 
-        rx_power_dbm = eirp_dbm - path_loss["total_path_loss_db"] + rx_gain_dbi - dir_reduction
         row_values[col_idx] = rx_power_dbm
     return row_idx, row_values
 
@@ -197,11 +198,6 @@ def generate_coverage(
 
     eirp_dbm = tx_power_dbm + tx_gain_dbi - cable_loss_db
 
-    # Get TX elevation for directional antenna calculations
-    from services.terrain import get_elevation
-    tx_elev = get_elevation(tx_lat, tx_lon)
-    tx_height_asl = tx_elev + tx_height_m
-
     num_rows = len(lats)
     num_cols = len(lons)
     grid = np.full((num_rows, num_cols), -999.0)
@@ -226,7 +222,7 @@ def generate_coverage(
                     eirp_dbm, rx_gain_dbi, radius_m, num_profile_points,
                     antenna_azimuth_deg, antenna_tilt_deg,
                     antenna_h_beamwidth, antenna_v_beamwidth,
-                    antenna_front_to_back_db, tx_height_asl,
+                    antenna_front_to_back_db,
                 )
             )
 

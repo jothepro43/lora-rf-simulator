@@ -243,6 +243,30 @@ def itm_approximation(
     return loss
 
 
+def bearing_from_coords(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Compute compass bearing (0-360) from point 1 to point 2."""
+    lat1, lon1, lat2, lon2 = map(math.radians, [lat1, lon1, lat2, lon2])
+    dlon = lon2 - lon1
+    x = math.sin(dlon) * math.cos(lat2)
+    y = math.cos(lat1) * math.sin(lat2) - math.sin(lat1) * math.cos(lat2) * math.cos(dlon)
+    bearing = math.degrees(math.atan2(x, y))
+    return bearing % 360
+
+
+# Alias for backwards compatibility
+bearing_between = bearing_from_coords
+
+
+def elevation_angle(
+    dist_m: float, tx_height_asl: float, rx_height_asl: float
+) -> float:
+    """Compute elevation angle in degrees from TX to RX."""
+    if dist_m <= 0:
+        return 0.0
+    return math.degrees(math.atan2(rx_height_asl - tx_height_asl, dist_m))
+
+
+
 def directional_gain_reduction(
     azimuth_to_point: float,
     antenna_azimuth: float,
@@ -254,7 +278,8 @@ def directional_gain_reduction(
 ) -> float:
     """Calculate gain reduction (dB) for a directional antenna based on pointing offset.
 
-    Returns 0 for omnidirectional antennas (h_beamwidth >= 360).
+    Returns dB reduction from peak gain (always >= 0).
+    For omnidirectional antennas (h_beamwidth >= 360), returns 0.
     """
     if h_beamwidth >= 360:
         return 0.0
@@ -272,7 +297,7 @@ def directional_gain_reduction(
 
     # Horizontal reduction
     if h_offset <= h_half_bw:
-        h_reduction = 12 * (h_offset / h_half_bw) ** 2
+        h_reduction = 12 * (h_offset / h_half_bw) ** 2  # -3dB at half beamwidth edge
     elif h_offset <= 90:
         h_reduction = 12 + (h_offset - h_half_bw) / (90 - h_half_bw) * (front_to_back_db - 12)
     else:
@@ -285,28 +310,6 @@ def directional_gain_reduction(
         v_reduction = min(30, 12 + (v_offset - v_half_bw) * 0.5)
 
     return h_reduction + v_reduction
-
-
-def bearing_between(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    """Compass bearing (0-360) from point 1 to point 2."""
-    lat1, lon1, lat2, lon2 = map(math.radians, [lat1, lon1, lat2, lon2])
-    dlon = lon2 - lon1
-    x = math.sin(dlon) * math.cos(lat2)
-    y = math.cos(lat1) * math.sin(lat2) - math.sin(lat1) * math.cos(lat2) * math.cos(dlon)
-    brng = math.atan2(x, y)
-    return (math.degrees(brng) + 360) % 360
-
-
-def elevation_angle(
-    tx_lat: float, tx_lon: float, tx_height_asl: float,
-    rx_lat: float, rx_lon: float, rx_elev: float, rx_height_m: float,
-) -> float:
-    """Vertical angle (degrees) from TX to RX. Positive = upward."""
-    dist = haversine_distance(tx_lat, tx_lon, rx_lat, rx_lon)
-    if dist <= 0:
-        return 0.0
-    dh = (rx_elev + rx_height_m) - tx_height_asl
-    return math.degrees(math.atan2(dh, dist))
 
 
 def compute_path_loss(

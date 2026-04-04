@@ -2,6 +2,7 @@
 import { ref, computed } from 'vue'
 import { useStore } from '../store'
 import { api } from '../utils/api'
+import AntennaPattern from './AntennaPattern.vue'
 
 const store = useStore()
 
@@ -14,6 +15,7 @@ const sections = ref({
   environment: false,
   output: false,
   display: false,
+  precomputed: false,
   mqtt: false,
   nodes: true,
 })
@@ -48,58 +50,183 @@ const currentGradient = computed(() => {
   return COLORMAP_GRADIENTS[store.displayParams.colormap] || COLORMAP_GRADIENTS.plasma
 })
 
-// Antenna radiation pattern SVG path (polar plot)
-const antennaPatternPath = computed(() => {
-  const ant = store.antennas[store.currentNode.antenna_preset]
-  if (!ant) return ''
-  const cx = 100, cy = 100, maxR = 80
-  const hBw = ant.h_beamwidth
-  const ftb = ant.front_to_back_db || 0
-  const isOmni = hBw >= 360
+async function runCoverage() {
+  if (!store.nodes.length) return
+  const node = store.selectedNode || store.nodes[0]
+  store.loading = true
 
-  const points: string[] = []
-  for (let deg = 0; deg < 360; deg += 2) {
-    let gain = 1.0
-    if (!isOmni) {
-      // Approximate directional pattern
-      let offset = Math.abs(deg)
-      if (offset > 180) offset = 360 - offset
-      const halfBw = hBw / 2
-      if (offset <= halfBw) {
-        gain = Math.cos((offset / halfBw) * Math.PI / 4) ** 2
-      } else if (offset <= 90) {
-        const ratio = (offset - halfBw) / (90 - halfBw)
-        gain = Math.pow(10, -((12 + ratio * (ftb - 12)) / 20))
-      } else {
-        gain = Math.pow(10, -(ftb / 20))
-      }
+  // Create abort controller
+  const controller = new AbortController()
+  store.coverageAbort = controller
+
+  // Get antenna directional params
+  const antenna = store.antennas[node.antenna_preset]
+
+  try {
+    store.coverageResult = await api.simulateCoverage({
+      tx_lat: node.lat,
+      tx_lon: node.lon,
+      tx_height_m: node.height_agl,
+      tx_power_dbm: node.tx_power_dbm,
+      tx_gain_dbi: node.antenna_gain_dbi,
+      cable_loss_db: cableLoss.value,
+      rx_gain_dbi: store.simParams.rx_gain_dbi,
+      rx_sensitivity_dbm: node.rx_sensitivity_dbm,
+      frequency_mhz: node.frequency_mhz,
+      radius_km: store.simParams.radius_km,
+      resolution_m: store.simParams.resolution_m,
+      rx_height_m: store.simParams.rx_height_m,
+      k_factor: store.simParams.k_factor,
+      rain_rate_mmh: store.simParams.rain_rate_mmh,
+      min_dbm: store.displayParams.min_dbm,
+      max_dbm: store.displayParams.max_dbm,
+      colormap: store.displayParams.colormap,
+      antenna_azimuth_deg: node.antenna_azimuth_deg ?? 0,
+      antenna_tilt_deg: node.antenna_tilt_deg ?? 0,
+      antenna_h_beamwidth: antenna?.h_beamwidth ?? 360,
+      antenna_v_beamwidth: antenna?.v_beamwidth ?? 90,
+      antenna_front_to_back_db: antenna?.front_to_back_db ?? 0,
+    }, controller.signal)
+  } catch (err: any) {
+    if (err.name !== 'AbortError') {
+      console.error('Coverage simulation failed:', err)
     }
-    const r = maxR * Math.max(0.05, gain)
-    const rad = (deg - 90) * Math.PI / 180
-    const x = cx + r * Math.cos(rad + Math.PI / 2)
-    const y = cy - r * Math.sin(rad + Math.PI / 2)
-    points.push(`${deg === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`)
+  } finally {
+    store.loading = false
+    store.coverageAbort = null
   }
-  points.push('Z')
-  return points.join(' ')
-})
-
-// Multi-site coverage: collect all selected node IDs
-const multiSiteNodeIds = ref<Set<number>>(new Set())
-
-function toggleMultiSiteNode(id: number) {
-  if (multiSiteNodeIds.value.has(id)) {
-    multiSiteNodeIds.value.delete(id)
-  } else {
-    multiSiteNodeIds.value.add(id)
-  }
-  // Force reactivity
-  multiSiteNodeIds.value = new Set(multiSiteNodeIds.value)
 }
 
-function buildCoverageParams(node: any) {
-  const ant = store.antennas[node.antenna_preset]
-  return {
+async function runMultiCoverage() {
+  if (store.nodes.length < 2) return
+  store.loading = true
+  const controller = new AbortController()
+  store.coverageAbort = controller
+
+  try {
+    const nodeRequests = store.nodes.map(node => {
+      const antenna = store.antennas[node.antenna_preset]
+      const cable = store.cables[node.cable_type]
+      const nodeCableLoss = cable
+        ? cable.loss_db_per_meter * (node.cable_length_m || 0) + cable.connector_loss_db * (node.connectors || 0)
+        : 0
+      return {
+        tx_lat: node.lat,
+        tx_lon: node.lon,
+        tx_height_m: node.height_agl,
+        tx_power_dbm: node.tx_power_dbm,
+        tx_gain_dbi: node.antenna_gain_dbi,
+        cable_loss_db: nodeCableLoss,
+        rx_gain_dbi: store.simParams.rx_gain_dbi,
+        rx_sensitivity_dbm: node.rx_sensitivity_dbm,
+        frequency_mhz: node.frequency_mhz,
+        radius_km: store.simParams.radius_km,
+        resolution_m: store.simParams.resolution_m,
+        rx_height_m: store.simParams.rx_height_m,
+        k_factor: store.simParams.k_factor,
+        rain_rate_mmh: store.simParams.rain_rate_mmh,
+        min_dbm: store.displayParams.min_dbm,
+        max_dbm: store.displayParams.max_dbm,
+        colormap: store.displayParams.colormap,
+        antenna_azimuth_deg: node.antenna_azimuth_deg ?? 0,
+        antenna_tilt_deg: node.antenna_tilt_deg ?? 0,
+        antenna_h_beamwidth: antenna?.h_beamwidth ?? 360,
+        antenna_v_beamwidth: antenna?.v_beamwidth ?? 90,
+        antenna_front_to_back_db: antenna?.front_to_back_db ?? 0,
+      }
+    })
+    store.coverageResult = await api.simulateMultiCoverage(
+      { nodes: nodeRequests, combine_mode: 'best' },
+      controller.signal,
+    )
+  } catch (err: any) {
+    if (err.name !== 'AbortError') {
+      console.error('Multi-coverage simulation failed:', err)
+    }
+  } finally {
+    store.loading = false
+    store.coverageAbort = null
+  }
+}
+
+async function deleteSelectedNode() {
+  if (store.selectedNodeId != null) {
+    await store.deleteNode(store.selectedNodeId)
+  }
+}
+
+const precomputedList = ref<any[]>([])
+const precomputeName = ref('')
+
+async function loadPrecomputed() {
+  precomputedList.value = await api.listPrecomputed()
+}
+
+async function runPrecompute() {
+  if (!store.nodes.length || !precomputeName.value) return
+  const node = store.selectedNode || store.nodes[0]
+  const antenna = store.antennas[node.antenna_preset]
+  store.loading = true
+  try {
+    await api.precompute({
+      name: precomputeName.value,
+      coverage: {
+        tx_lat: node.lat,
+        tx_lon: node.lon,
+        tx_height_m: node.height_agl,
+        tx_power_dbm: node.tx_power_dbm,
+        tx_gain_dbi: node.antenna_gain_dbi,
+        cable_loss_db: cableLoss.value,
+        rx_gain_dbi: store.simParams.rx_gain_dbi,
+        rx_sensitivity_dbm: node.rx_sensitivity_dbm,
+        frequency_mhz: node.frequency_mhz,
+        radius_km: store.simParams.radius_km,
+        resolution_m: store.simParams.resolution_m,
+        rx_height_m: store.simParams.rx_height_m,
+        k_factor: store.simParams.k_factor,
+        rain_rate_mmh: store.simParams.rain_rate_mmh,
+        min_dbm: store.displayParams.min_dbm,
+        max_dbm: store.displayParams.max_dbm,
+        colormap: store.displayParams.colormap,
+        antenna_azimuth_deg: node.antenna_azimuth_deg ?? 0,
+        antenna_tilt_deg: node.antenna_tilt_deg ?? 0,
+        antenna_h_beamwidth: antenna?.h_beamwidth ?? 360,
+        antenna_v_beamwidth: antenna?.v_beamwidth ?? 90,
+        antenna_front_to_back_db: antenna?.front_to_back_db ?? 0,
+      },
+    })
+    await loadPrecomputed()
+    precomputeName.value = ''
+  } catch (err) {
+    console.error('Precompute failed:', err)
+  } finally {
+    store.loading = false
+  }
+}
+
+async function loadPrecomputedResult(name: string) {
+  store.coverageResult = await api.getPrecomputed(name)
+}
+
+async function deletePrecomputed(name: string) {
+  await api.deletePrecomputed(name)
+  await loadPrecomputed()
+}
+
+const mqttConfig = ref({
+  server_url: '',
+  port: 1883,
+  topic: 'meshtastic/#',
+  username: '',
+  password: '',
+  enabled: false,
+})
+
+async function exportCoverageKmz() {
+  if (!store.nodes.length) return
+  const node = store.selectedNode || store.nodes[0]
+  const antenna = store.antennas[node.antenna_preset]
+  await api.exportCoverageKmz({
     tx_lat: node.lat,
     tx_lon: node.lon,
     tx_height_m: node.height_agl,
@@ -119,110 +246,31 @@ function buildCoverageParams(node: any) {
     colormap: store.displayParams.colormap,
     antenna_azimuth_deg: node.antenna_azimuth_deg ?? 0,
     antenna_tilt_deg: node.antenna_tilt_deg ?? 0,
-    antenna_h_beamwidth: ant?.h_beamwidth ?? 360,
-    antenna_v_beamwidth: ant?.v_beamwidth ?? 90,
-    antenna_front_to_back_db: ant?.front_to_back_db ?? 0,
-  }
-}
-
-async function runCoverage() {
-  if (!store.nodes.length) return
-  const node = store.selectedNode || store.nodes[0]
-  store.loading = true
-
-  const controller = new AbortController()
-  store.coverageAbort = controller
-
-  try {
-    store.coverageResult = await api.simulateCoverage(
-      buildCoverageParams(node), controller.signal
-    )
-  } catch (err: any) {
-    if (err.name !== 'AbortError') {
-      console.error('Coverage simulation failed:', err)
-    }
-  } finally {
-    store.loading = false
-    store.coverageAbort = null
-  }
-}
-
-async function runMultiSiteCoverage() {
-  const nodeIds = Array.from(multiSiteNodeIds.value)
-  if (!nodeIds.length) return
-  store.loading = true
-  const controller = new AbortController()
-  store.coverageAbort = controller
-
-  try {
-    // Run coverage for each selected node and keep the last result
-    // (combined overlay shows all results on the map)
-    for (const id of nodeIds) {
-      const node = store.nodes.find(n => n.id === id)
-      if (!node) continue
-      store.coverageResult = await api.simulateCoverage(
-        buildCoverageParams(node), controller.signal
-      )
-    }
-  } catch (err: any) {
-    if (err.name !== 'AbortError') {
-      console.error('Multi-site coverage failed:', err)
-    }
-  } finally {
-    store.loading = false
-    store.coverageAbort = null
-  }
-}
-
-function exportKMZ() {
-  const node = store.selectedNode || store.nodes[0]
-  if (!node) return
-  const ant = store.antennas[node.antenna_preset]
-  const params = new URLSearchParams({
-    tx_lat: String(node.lat),
-    tx_lon: String(node.lon),
-    tx_height_m: String(node.height_agl),
-    tx_power_dbm: String(node.tx_power_dbm),
-    tx_gain_dbi: String(node.antenna_gain_dbi),
-    cable_loss_db: String(cableLoss.value),
-    rx_gain_dbi: String(store.simParams.rx_gain_dbi),
-    rx_sensitivity_dbm: String(node.rx_sensitivity_dbm),
-    frequency_mhz: String(node.frequency_mhz),
-    radius_km: String(store.simParams.radius_km),
-    resolution_m: String(store.simParams.resolution_m),
-    rx_height_m: String(store.simParams.rx_height_m),
-    k_factor: String(store.simParams.k_factor),
-    rain_rate_mmh: String(store.simParams.rain_rate_mmh),
-    min_dbm: String(store.displayParams.min_dbm),
-    max_dbm: String(store.displayParams.max_dbm),
-    colormap: store.displayParams.colormap,
+    antenna_h_beamwidth: antenna?.h_beamwidth ?? 360,
+    antenna_v_beamwidth: antenna?.v_beamwidth ?? 90,
+    antenna_front_to_back_db: antenna?.front_to_back_db ?? 0,
     site_name: node.name,
-    format: 'kmz',
-    antenna_azimuth_deg: String(node.antenna_azimuth_deg ?? 0),
-    antenna_tilt_deg: String(node.antenna_tilt_deg ?? 0),
-    antenna_h_beamwidth: String(ant?.h_beamwidth ?? 360),
-    antenna_v_beamwidth: String(ant?.v_beamwidth ?? 90),
-    antenna_front_to_back_db: String(ant?.front_to_back_db ?? 0),
-  })
-  window.open(`/api/export/kml/coverage?${params}`, '_blank')
+  }, `coverage_${node.name}.kmz`)
 }
 
-function exportNodesKML() {
-  window.open('/api/export/kml/nodes', '_blank')
-}
-
-function exportPNG() {
+function exportCoveragePng() {
   if (!store.coverageResult?.image_base64) return
+  const binary = atob(store.coverageResult.image_base64)
+  const bytes = new Uint8Array(binary.length)
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+  const blob = new Blob([bytes], { type: 'image/png' })
+  const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
-  a.href = `data:image/png;base64,${store.coverageResult.image_base64}`
+  a.href = url
   a.download = 'coverage.png'
+  document.body.appendChild(a)
   a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
 }
 
-async function deleteSelectedNode() {
-  if (store.selectedNodeId != null) {
-    await store.deleteNode(store.selectedNodeId)
-  }
+async function saveMqttConfig() {
+  await api.updateMqttConfig(mqttConfig.value)
 }
 
 const roles = ['CLIENT', 'CLIENT_MUTE', 'ROUTER', 'ROUTER_LATE', 'REPEATER']
@@ -400,6 +448,23 @@ const weatherOptions = [
               <span class="unit">dBi</span>
             </div>
           </div>
+          <!-- Directional antenna controls -->
+          <template v-if="store.antennas[store.currentNode.antenna_preset]?.type === 'directional'">
+            <div class="field-row">
+              <label>Azimuth</label>
+              <div class="input-unit">
+                <input v-model.number="store.currentNode.antenna_azimuth_deg" type="number" min="0" max="360" step="1" />
+                <span class="unit">deg</span>
+              </div>
+            </div>
+            <div class="field-row">
+              <label>Tilt</label>
+              <div class="input-unit">
+                <input v-model.number="store.currentNode.antenna_tilt_deg" type="number" min="-30" max="30" step="0.5" />
+                <span class="unit">deg</span>
+              </div>
+            </div>
+          </template>
           <div v-if="store.antennas[store.currentNode.antenna_preset]" class="antenna-info">
             <div class="info-row">
               <span class="info-label">Type</span>
@@ -417,55 +482,20 @@ const weatherOptions = [
               <span class="info-label">V Beamwidth</span>
               <span>{{ store.antennas[store.currentNode.antenna_preset]?.v_beamwidth }}&#176;</span>
             </div>
+            <div v-if="store.antennas[store.currentNode.antenna_preset]?.front_to_back_db > 0" class="info-row">
+              <span class="info-label">F/B Ratio</span>
+              <span>{{ store.antennas[store.currentNode.antenna_preset]?.front_to_back_db }} dB</span>
+            </div>
           </div>
-          <!-- Directional antenna controls -->
-          <template v-if="store.antennas[store.currentNode.antenna_preset]?.type === 'directional'">
-            <div class="field-row" style="margin-top: 8px;">
-              <label>Azimuth</label>
-              <div class="input-unit">
-                <input v-model.number="store.currentNode.antenna_azimuth_deg" type="number" min="0" max="360" step="1" />
-                <span class="unit">&#176;</span>
-              </div>
-            </div>
-            <div class="field-row">
-              <label>Tilt</label>
-              <div class="input-unit">
-                <input v-model.number="store.currentNode.antenna_tilt_deg" type="number" min="-30" max="30" step="1" />
-                <span class="unit">&#176;</span>
-              </div>
-            </div>
-            <div class="directional-hint">
-              0&#176; = North, 90&#176; = East. Tilt: + up, - down
-            </div>
-          </template>
-          <!-- Antenna Radiation Pattern Polar Plot -->
-          <div v-if="store.antennas[store.currentNode.antenna_preset]" class="pattern-plot">
-            <div class="pattern-title">Radiation Pattern (H-plane)</div>
-            <svg viewBox="0 0 200 200" class="polar-svg">
-              <!-- Grid circles -->
-              <circle cx="100" cy="100" r="80" fill="none" stroke="#30363d" stroke-width="0.5" />
-              <circle cx="100" cy="100" r="60" fill="none" stroke="#30363d" stroke-width="0.5" />
-              <circle cx="100" cy="100" r="40" fill="none" stroke="#30363d" stroke-width="0.5" />
-              <circle cx="100" cy="100" r="20" fill="none" stroke="#30363d" stroke-width="0.5" />
-              <!-- Axis lines -->
-              <line x1="100" y1="20" x2="100" y2="180" stroke="#30363d" stroke-width="0.5" />
-              <line x1="20" y1="100" x2="180" y2="100" stroke="#30363d" stroke-width="0.5" />
-              <!-- Cardinal labels -->
-              <text x="100" y="14" text-anchor="middle" fill="#8b949e" font-size="9">N</text>
-              <text x="100" y="196" text-anchor="middle" fill="#8b949e" font-size="9">S</text>
-              <text x="188" y="104" text-anchor="middle" fill="#8b949e" font-size="9">E</text>
-              <text x="12" y="104" text-anchor="middle" fill="#8b949e" font-size="9">W</text>
-              <!-- Pattern -->
-              <path :d="antennaPatternPath" fill="rgba(63,185,80,0.2)" stroke="#3fb950" stroke-width="1.5" />
-              <!-- Azimuth direction indicator (for directional) -->
-              <line v-if="store.antennas[store.currentNode.antenna_preset]?.type === 'directional'"
-                :x1="100"
-                :y1="100"
-                :x2="100 + 85 * Math.sin(store.currentNode.antenna_azimuth_deg * Math.PI / 180)"
-                :y2="100 - 85 * Math.cos(store.currentNode.antenna_azimuth_deg * Math.PI / 180)"
-                stroke="#f85149" stroke-width="1.5" stroke-dasharray="4,3" />
-            </svg>
-          </div>
+          <AntennaPattern
+            v-if="store.antennas[store.currentNode.antenna_preset]"
+            :h-beamwidth="store.antennas[store.currentNode.antenna_preset]?.h_beamwidth ?? 360"
+            :v-beamwidth="store.antennas[store.currentNode.antenna_preset]?.v_beamwidth ?? 90"
+            :gain="store.currentNode.antenna_gain_dbi"
+            :front-to-back="store.antennas[store.currentNode.antenna_preset]?.front_to_back_db ?? 0"
+            :azimuth="store.currentNode.antenna_azimuth_deg"
+            :type="store.antennas[store.currentNode.antenna_preset]?.type ?? 'omnidirectional'"
+          />
         </div>
       </div>
 
@@ -642,12 +672,27 @@ const weatherOptions = [
         <button class="btn-run" @click="runCoverage" :disabled="!store.nodes.length || store.loading">
           Run Coverage
         </button>
+        <button
+          v-if="store.nodes.length >= 2"
+          class="btn-multi"
+          @click="runMultiCoverage"
+          :disabled="store.loading"
+          title="Run coverage from all nodes"
+        >
+          All Sites
+        </button>
       </div>
 
-      <!-- Multi-site Coverage -->
-      <div v-if="store.nodes.length > 1" class="actions">
-        <button class="btn-multi" @click="runMultiSiteCoverage" :disabled="multiSiteNodeIds.size < 1 || store.loading">
-          Multi-Site ({{ multiSiteNodeIds.size }})
+      <!-- Export Buttons -->
+      <div class="actions export-actions">
+        <button class="btn-export" @click="exportCoverageKmz" :disabled="!store.nodes.length" title="Export coverage as KMZ for Google Earth">
+          Export KMZ
+        </button>
+        <button class="btn-export" @click="exportCoveragePng" :disabled="!store.coverageResult?.image_base64" title="Download coverage PNG">
+          Export PNG
+        </button>
+        <button class="btn-export" @click="api.exportNodesKml()" :disabled="!store.nodes.length" title="Export nodes as KML">
+          Nodes KML
         </button>
       </div>
 
@@ -671,20 +716,42 @@ const weatherOptions = [
         </div>
       </div>
 
-      <!-- Export Buttons -->
-      <div class="actions export-actions">
-        <button class="btn-export" @click="exportKMZ" :disabled="!store.nodes.length" title="Export coverage as KMZ for Google Earth">
-          Export KMZ
-        </button>
-        <button class="btn-export" @click="exportNodesKML" :disabled="!store.nodes.length" title="Export nodes as KML">
-          Nodes KML
-        </button>
-        <button class="btn-export" @click="exportPNG" :disabled="!store.coverageResult" title="Download coverage PNG">
-          PNG
-        </button>
+      <!-- Pre-computed Section -->
+      <div class="section">
+        <div class="section-header" @click="() => { toggleSection('precomputed'); if (sections.precomputed) loadPrecomputed() }">
+          <span class="section-icon">&#128190;</span>
+          <span>Pre-computed</span>
+          <span class="chevron">{{ sections.precomputed ? '\u25BC' : '\u25B6' }}</span>
+        </div>
+        <div v-if="sections.precomputed" class="section-body">
+          <div class="field-row">
+            <label>Name</label>
+            <input v-model="precomputeName" type="text" placeholder="e.g. hilltop-5km" />
+          </div>
+          <button class="btn-mqtt-save" @click="runPrecompute" :disabled="!precomputeName || !store.nodes.length || store.loading">
+            Pre-compute
+          </button>
+          <div v-if="precomputedList.length" class="precompute-list">
+            <div
+              v-for="item in precomputedList"
+              :key="item.name"
+              class="node-item"
+              @click="loadPrecomputedResult(item.name)"
+            >
+              <div class="node-name">{{ item.name }}</div>
+              <div class="node-detail">
+                {{ item.stats?.cells_computed || 0 }} cells | {{ item.compute_time_s }}s
+              </div>
+              <button class="node-delete" @click.stop="deletePrecomputed(item.name)">&#10005;</button>
+            </div>
+          </div>
+          <div v-else class="empty-state">
+            No pre-computed results yet.
+          </div>
+        </div>
       </div>
 
-      <!-- MQTT Integration -->
+      <!-- MQTT Section -->
       <div class="section">
         <div class="section-header" @click="toggleSection('mqtt')">
           <span class="section-icon">&#128225;</span>
@@ -692,22 +759,30 @@ const weatherOptions = [
           <span class="chevron">{{ sections.mqtt ? '\u25BC' : '\u25B6' }}</span>
         </div>
         <div v-if="sections.mqtt" class="section-body">
-          <div class="mqtt-badge">Coming Soon (Phase 3)</div>
+          <div class="mqtt-notice">MQTT Integration (Coming Soon)</div>
           <div class="field-row">
             <label>Server URL</label>
-            <input type="text" placeholder="mqtt://broker.example.com" disabled />
+            <input v-model="mqttConfig.server_url" type="text" placeholder="mqtt://broker.example.com" />
           </div>
           <div class="field-row">
             <label>Port</label>
-            <input type="number" value="1883" disabled />
+            <input v-model.number="mqttConfig.port" type="number" min="1" max="65535" />
           </div>
           <div class="field-row">
             <label>Topic</label>
-            <input type="text" value="meshtastic/#" disabled />
+            <input v-model="mqttConfig.topic" type="text" placeholder="meshtastic/#" />
           </div>
-          <div class="mqtt-info">
-            Real-time node position and telemetry data from MQTT-connected Meshtastic devices will be available in Phase 3.
+          <div class="field-row">
+            <label>Username</label>
+            <input v-model="mqttConfig.username" type="text" placeholder="optional" />
           </div>
+          <div class="field-row">
+            <label>Enabled</label>
+            <input type="checkbox" v-model="mqttConfig.enabled" style="width:auto;" />
+          </div>
+          <button class="btn-mqtt-save" @click="saveMqttConfig" :disabled="!mqttConfig.server_url">
+            Save Config
+          </button>
         </div>
       </div>
 
@@ -726,14 +801,6 @@ const weatherOptions = [
             :class="{ selected: node.id === store.selectedNodeId }"
             @click="() => { store.selectedNodeId = node.id ?? null; Object.assign(store.currentNode, node) }"
           >
-            <input
-              v-if="store.nodes.length > 1"
-              type="checkbox"
-              class="multi-site-check"
-              :checked="node.id != null && multiSiteNodeIds.has(node.id)"
-              @click.stop="() => node.id && toggleMultiSiteNode(node.id)"
-              title="Include in multi-site coverage"
-            />
             <div class="node-name">{{ node.name }}</div>
             <div class="node-detail">
               {{ node.lat.toFixed(4) }}, {{ node.lon.toFixed(4) }} |
@@ -990,6 +1057,14 @@ const weatherOptions = [
   font-weight: 600;
 }
 
+.btn-multi {
+  background: var(--accent-teal, #39d2c0);
+  color: #000;
+  padding: 10px;
+  font-weight: 600;
+  font-size: 12px;
+}
+
 .coverage-stats {
   padding: 8px 16px;
   border-bottom: 1px solid var(--border-color);
@@ -1013,7 +1088,7 @@ const weatherOptions = [
 }
 
 .node-item {
-  padding: 8px 10px 8px 20px;
+  padding: 8px 10px;
   border-radius: 4px;
   cursor: pointer;
   position: relative;
@@ -1080,42 +1155,6 @@ const weatherOptions = [
   border: 1px solid var(--border-color);
 }
 
-.directional-hint {
-  font-size: 10px;
-  color: var(--text-muted);
-  margin-top: 2px;
-  margin-bottom: 4px;
-}
-
-.pattern-plot {
-  margin-top: 8px;
-  padding: 8px;
-  background: var(--bg-primary);
-  border-radius: 4px;
-}
-
-.pattern-title {
-  font-size: 11px;
-  color: var(--text-muted);
-  margin-bottom: 4px;
-  text-align: center;
-}
-
-.polar-svg {
-  width: 100%;
-  max-width: 180px;
-  display: block;
-  margin: 0 auto;
-}
-
-.btn-multi {
-  flex: 1;
-  background: var(--accent-blue);
-  color: #fff;
-  padding: 10px;
-  font-weight: 600;
-}
-
 .export-actions {
   flex-wrap: wrap;
 }
@@ -1124,48 +1163,53 @@ const weatherOptions = [
   flex: 1;
   min-width: 70px;
   background: var(--bg-tertiary);
-  color: var(--text-primary);
-  border: 1px solid var(--border-color);
-  padding: 8px 10px;
-  font-size: 12px;
+  color: var(--text-secondary);
+  padding: 8px;
   font-weight: 500;
+  font-size: 12px;
+  border: 1px solid var(--border-color);
 }
 
 .btn-export:hover:not(:disabled) {
-  background: var(--accent-teal);
-  color: #000;
+  background: var(--accent-blue);
+  color: #fff;
+  border-color: var(--accent-blue);
 }
 
 .btn-export:disabled {
   opacity: 0.4;
+  cursor: not-allowed;
 }
 
-.mqtt-badge {
-  background: rgba(136, 136, 136, 0.15);
-  color: var(--text-muted);
-  padding: 4px 10px;
+.mqtt-notice {
+  background: rgba(88, 166, 255, 0.1);
+  color: var(--accent-blue);
+  padding: 8px 10px;
   border-radius: 4px;
-  font-size: 11px;
+  font-size: 12px;
+  font-weight: 500;
   text-align: center;
-  margin-bottom: 8px;
+  margin-bottom: 10px;
+  border: 1px solid rgba(88, 166, 255, 0.2);
 }
 
-.mqtt-info {
-  font-size: 11px;
-  color: var(--text-muted);
-  margin-top: 8px;
-  line-height: 1.4;
+.btn-mqtt-save {
+  width: 100%;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  padding: 8px;
+  font-size: 12px;
+  border: 1px solid var(--border-color);
+  margin-top: 4px;
 }
 
-.multi-site-check {
-  position: absolute;
-  left: 2px;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 14px;
-  height: 14px;
-  cursor: pointer;
-  accent-color: var(--accent-green);
+.btn-mqtt-save:hover:not(:disabled) {
+  background: var(--accent-blue);
+  color: #fff;
+}
+
+.btn-mqtt-save:disabled {
+  opacity: 0.4;
 }
 
 @media (max-width: 900px) {

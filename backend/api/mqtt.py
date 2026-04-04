@@ -16,43 +16,46 @@ class MqttConfig(BaseModel):
     enabled: bool = False
 
 
-class MqttStatus(BaseModel):
-    connected: bool = False
-    server_url: str = ""
-    messages_received: int = 0
-    last_message_at: Optional[str] = None
-
-
-_config = MqttConfig()
+# In-memory config store (would be persisted in Phase 3)
+_mqtt_config = MqttConfig()
 
 
 @router.get("/config")
-def get_mqtt_config() -> MqttConfig:
+def get_mqtt_config():
     """Get current MQTT configuration."""
-    return _config
+    return {
+        "server_url": _mqtt_config.server_url,
+        "port": _mqtt_config.port,
+        "topic": _mqtt_config.topic,
+        "username": _mqtt_config.username,
+        "enabled": _mqtt_config.enabled,
+        "status": "not_implemented",
+        "message": "MQTT integration coming in Phase 3",
+    }
 
 
 @router.post("/config")
-def update_mqtt_config(config: MqttConfig) -> MqttConfig:
-    """Update MQTT configuration (stub — does not connect yet)."""
-    global _config
-    _config = config
-    return _config
+def update_mqtt_config(config: MqttConfig):
+    """Update MQTT configuration (stub - saves in memory only)."""
+    global _mqtt_config
+    _mqtt_config = config
+    return {
+        "status": "saved",
+        "message": "Configuration saved (MQTT connection not yet implemented)",
+        "config": {
+            "server_url": config.server_url,
+            "port": config.port,
+            "topic": config.topic,
+            "enabled": config.enabled,
+        },
+    }
 
 
 @router.get("/status")
-def get_mqtt_status() -> MqttStatus:
-    """Get MQTT connection status (stub — always disconnected)."""
-    return MqttStatus(server_url=_config.server_url)
-
-
-@router.post("/connect")
-def connect_mqtt():
-    """Connect to MQTT broker (stub — not implemented yet)."""
-    return {"status": "not_implemented", "message": "MQTT integration coming in Phase 3"}
-
-
-@router.post("/disconnect")
-def disconnect_mqtt():
-    """Disconnect from MQTT broker (stub — not implemented yet)."""
-    return {"status": "not_implemented", "message": "MQTT integration coming in Phase 3"}
+def mqtt_status():
+    """Get MQTT connection status (stub)."""
+    return {
+        "connected": False,
+        "status": "not_implemented",
+        "message": "MQTT integration coming in Phase 3",
+    }

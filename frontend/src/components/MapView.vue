@@ -225,12 +225,20 @@ async function runLoS() {
   }
 }
 
-function exportCurrentPNG() {
+function exportPng() {
   if (!store.coverageResult?.image_base64) return
+  const binary = atob(store.coverageResult.image_base64)
+  const bytes = new Uint8Array(binary.length)
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+  const blob = new Blob([bytes], { type: 'image/png' })
+  const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
-  a.href = `data:image/png;base64,${store.coverageResult.image_base64}`
+  a.href = url
   a.download = 'coverage.png'
+  document.body.appendChild(a)
   a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
 }
 
 function cancelCoverage() {
@@ -301,9 +309,9 @@ watch(() => store.nodes, () => refreshMarkers(), { deep: true })
         LoS Profile
       </button>
       <button
-        v-if="store.coverageResult"
-        @click="exportCurrentPNG"
-        title="Download coverage image"
+        v-if="store.coverageResult?.image_base64"
+        @click="exportPng"
+        title="Download coverage as PNG"
       >
         Export PNG
       </button>
