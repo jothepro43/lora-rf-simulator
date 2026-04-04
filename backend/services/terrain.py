@@ -63,7 +63,7 @@ def _download_tile(tile_name: str) -> bool:
     from the AWS/Mapzen elevation tile service.
     """
     hgt_file = _hgt_path(tile_name)
-    if hgt_file.exists() and hgt_file.stat().st_size == HGT_BYTES:
+    if hgt_file.exists() and hgt_file.stat().st_size in (HGT_BYTES_1AS, HGT_BYTES_3AS):
         return True
 
     hemisphere_lat = tile_name[:3]  # e.g., "N34"
