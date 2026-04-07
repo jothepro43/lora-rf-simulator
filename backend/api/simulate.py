@@ -48,6 +48,7 @@ class CoverageRequest(BaseModel):
     antenna_h_beamwidth: float = 360.0
     antenna_v_beamwidth: float = 90.0
     antenna_front_to_back_db: float = 0.0
+    model: str = "terrain"  # "terrain" (radial sweep) or "fspl" (quick preview)
 
 
 class LinkBudgetRequest(BaseModel):
@@ -121,6 +122,7 @@ def simulate_coverage(req: CoverageRequest):
         antenna_h_beamwidth=req.antenna_h_beamwidth,
         antenna_v_beamwidth=req.antenna_v_beamwidth,
         antenna_front_to_back_db=req.antenna_front_to_back_db,
+        model=req.model,
     )
 
 
@@ -166,6 +168,7 @@ def simulate_multi_coverage(req: MultiCoverageRequest):
             antenna_h_beamwidth=node_req.antenna_h_beamwidth,
             antenna_v_beamwidth=node_req.antenna_v_beamwidth,
             antenna_front_to_back_db=node_req.antenna_front_to_back_db,
+            model=node_req.model,
         )
         grids.append(result)
 
@@ -276,6 +279,7 @@ def precompute_coverage(req: PrecomputeRequest):
         antenna_h_beamwidth=req.coverage.antenna_h_beamwidth,
         antenna_v_beamwidth=req.coverage.antenna_v_beamwidth,
         antenna_front_to_back_db=req.coverage.antenna_front_to_back_db,
+        model=req.coverage.model,
     )
 
     cache_key = req.name

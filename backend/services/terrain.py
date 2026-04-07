@@ -235,6 +235,48 @@ def get_elevation_batch(points: list[tuple[float, float]]) -> list[float]:
     return results
 
 
+def batch_get_elevation(lats: np.ndarray, lons: np.ndarray) -> np.ndarray:
+    """Vectorized elevation lookup for numpy arrays of lat/lon.
+
+    Groups points by HGT tile and uses direct numpy array indexing
+    for maximum throughput. Returns elevations in meters ASL.
+    """
+    n = len(lats)
+    results = np.zeros(n, dtype=np.float32)
+
+    lat_floors = np.floor(lats).astype(int)
+    lon_floors = np.floor(lons).astype(int)
+
+    # Get unique tiles needed
+    unique_tiles = set(zip(lat_floors.tolist(), lon_floors.tolist()))
+
+    for lat_f, lon_f in unique_tiles:
+        tile_name_str = _tile_name(float(lat_f) + 0.5, float(lon_f) + 0.5)
+        tile_data = _load_tile(tile_name_str)
+        if tile_data is None:
+            continue
+
+        mask = (lat_floors == lat_f) & (lon_floors == lon_f)
+        tile_lats = lats[mask]
+        tile_lons = lons[mask]
+
+        samples = tile_data.shape[0]
+        lat_frac = tile_lats - lat_f
+        lon_frac = tile_lons - lon_f
+
+        # HGT row 0 = north edge; row increases southward
+        rows = ((1.0 - lat_frac) * (samples - 1)).astype(int)
+        cols = (lon_frac * (samples - 1)).astype(int)
+        rows = np.clip(rows, 0, samples - 1)
+        cols = np.clip(cols, 0, samples - 1)
+
+        elevs = tile_data[rows, cols].astype(np.float32)
+        elevs[elevs == VOID_VALUE] = 0.0
+        results[mask] = elevs
+
+    return results
+
+
 def get_terrain_profile(
     lat1: float, lon1: float,
     lat2: float, lon2: float,

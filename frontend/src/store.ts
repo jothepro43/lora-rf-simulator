@@ -54,7 +54,7 @@ export const useStore = defineStore('main', () => {
     rx_gain_dbi: 2.0,
     k_factor: 1.333,
     rain_rate_mmh: 0,
-    model: 'fspl_diffraction',
+    model: 'terrain',
     environment: 'temperate',
     noise_floor_dbm: -120,
   })

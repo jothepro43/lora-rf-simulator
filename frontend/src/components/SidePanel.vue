@@ -86,6 +86,7 @@ async function runCoverage() {
       antenna_h_beamwidth: antenna?.h_beamwidth ?? 360,
       antenna_v_beamwidth: antenna?.v_beamwidth ?? 90,
       antenna_front_to_back_db: antenna?.front_to_back_db ?? 0,
+      model: store.simParams.model,
     }, controller.signal)
   } catch (err: any) {
     if (err.name !== 'AbortError') {
@@ -133,6 +134,7 @@ async function runMultiCoverage() {
         antenna_h_beamwidth: antenna?.h_beamwidth ?? 360,
         antenna_v_beamwidth: antenna?.v_beamwidth ?? 90,
         antenna_front_to_back_db: antenna?.front_to_back_db ?? 0,
+        model: store.simParams.model,
       }
     })
     store.coverageResult = await api.simulateMultiCoverage(
@@ -193,6 +195,7 @@ async function runPrecompute() {
         antenna_h_beamwidth: antenna?.h_beamwidth ?? 360,
         antenna_v_beamwidth: antenna?.v_beamwidth ?? 90,
         antenna_front_to_back_db: antenna?.front_to_back_db ?? 0,
+        model: store.simParams.model,
       },
     })
     await loadPrecomputed()
@@ -249,6 +252,7 @@ async function exportCoverageKmz() {
     antenna_h_beamwidth: antenna?.h_beamwidth ?? 360,
     antenna_v_beamwidth: antenna?.v_beamwidth ?? 90,
     antenna_front_to_back_db: antenna?.front_to_back_db ?? 0,
+    model: store.simParams.model,
     site_name: node.name,
   }, `coverage_${node.name}.kmz`)
 }
@@ -535,9 +539,8 @@ const weatherOptions = [
           <div class="field-row">
             <label>Propagation</label>
             <select v-model="store.simParams.model">
-              <option value="fspl_diffraction">FSPL + Knife-Edge</option>
-              <option value="itm" disabled>ITM (coming soon)</option>
-              <option value="los">Line of Sight Only</option>
+              <option value="terrain">Full (Terrain)</option>
+              <option value="fspl">Quick (FSPL only)</option>
             </select>
           </div>
           <div class="field-row">
