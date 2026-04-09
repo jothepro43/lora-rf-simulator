@@ -58,12 +58,72 @@ app.include_router(export_router)
 app.include_router(mqtt_router)
 
 
+CUSTOM_DEVICES_PATH = Path(__file__).parent / "data" / "custom_devices.json"
+
+
+def _load_custom_devices() -> dict:
+    if CUSTOM_DEVICES_PATH.exists():
+        with open(CUSTOM_DEVICES_PATH) as f:
+            return json.load(f)
+    return {}
+
+
+def _save_custom_devices(data: dict):
+    with open(CUSTOM_DEVICES_PATH, "w") as f:
+        json.dump(data, f, indent=2)
+
+
 # Data catalog endpoints
 @app.get("/api/data/devices")
 def get_devices():
     data_dir = Path(__file__).parent / "data"
     with open(data_dir / "devices.json") as f:
-        return json.load(f)
+        builtin = json.load(f)
+    custom = _load_custom_devices()
+    return {**builtin, **custom}
+
+
+@app.post("/api/data/devices/custom")
+def add_custom_device(device: dict):
+    """Add a custom device to the custom_devices.json file."""
+    custom = _load_custom_devices()
+    # Generate a key from the device name
+    key = "custom_" + device.get("name", "device").lower().replace(" ", "_").replace("-", "_")
+    # Ensure unique key
+    base_key = key
+    counter = 1
+    while key in custom:
+        key = f"{base_key}_{counter}"
+        counter += 1
+
+    custom[key] = {
+        "name": device.get("name", "Custom Device"),
+        "manufacturer": device.get("manufacturer", "Custom"),
+        "radio": device.get("radio", "SX1262"),
+        "tx_power_dbm": device.get("tx_power_dbm", 22),
+        "rx_sensitivity_dbm": device.get("rx_sensitivity_dbm", -148),
+        "frequency_range": "863-928 MHz",
+        "connector": device.get("connector", "SMA"),
+        "power_consumption_tx_ma": 0,
+        "power_consumption_rx_ma": 0,
+        "protocols": ["LoRa"],
+        "notes": device.get("notes", ""),
+        "custom": True,
+    }
+    _save_custom_devices(custom)
+    return {"key": key, "device": custom[key]}
+
+
+@app.delete("/api/data/devices/custom/{key}")
+def delete_custom_device(key: str):
+    """Remove a custom device."""
+    custom = _load_custom_devices()
+    if key not in custom:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail=f"Custom device '{key}' not found")
+    del custom[key]
+    _save_custom_devices(custom)
+    return {"detail": f"Deleted custom device '{key}'"}
 
 
 @app.get("/api/data/antennas")

@@ -139,6 +139,50 @@ export const useStore = defineStore('main', () => {
     }
   }
 
+  async function runNodeToNodeLos(nodeId1: number, nodeId2: number) {
+    const n1 = nodes.value.find(n => n.id === nodeId1)
+    const n2 = nodes.value.find(n => n.id === nodeId2)
+    if (!n1 || !n2) return
+
+    losPoints.value = [
+      { lat: n1.lat, lon: n1.lon },
+      { lat: n2.lat, lon: n2.lon },
+    ]
+
+    loading.value = true
+    try {
+      const result = await api.simulateLos({
+        tx_lat: n1.lat,
+        tx_lon: n1.lon,
+        tx_height_m: n1.height_agl,
+        rx_lat: n2.lat,
+        rx_lon: n2.lon,
+        rx_height_m: n2.height_agl,
+        frequency_mhz: n1.frequency_mhz,
+        num_points: 200,
+        k_factor: simParams.value.k_factor,
+      })
+      losResult.value = result
+      terrainProfileOpen.value = true
+    } catch (err) {
+      console.error('Node-to-Node LoS failed:', err)
+    } finally {
+      loading.value = false
+    }
+  }
+
+  async function addCustomDevice(device: Record<string, any>) {
+    const created = await api.addCustomDevice(device)
+    // Refresh devices catalog
+    devices.value = await api.getDevices()
+    return created
+  }
+
+  async function deleteCustomDevice(key: string) {
+    await api.deleteCustomDevice(key)
+    devices.value = await api.getDevices()
+  }
+
   return {
     devices, antennas, cables, channels,
     nodes, selectedNodeId, selectedNode,
@@ -147,6 +191,7 @@ export const useStore = defineStore('main', () => {
     currentNode, simParams, displayParams,
     loadCatalogs, loadNodes, saveNode, deleteNode,
     applyDevicePreset, applyAntennaPreset, applyChannelPreset,
-    cancelCoverage,
+    cancelCoverage, runNodeToNodeLos,
+    addCustomDevice, deleteCustomDevice,
   }
 })

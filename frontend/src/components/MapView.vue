@@ -112,10 +112,32 @@ onMounted(() => {
     }
   )
 
+  const topoRelief = L.tileLayer(
+    'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}',
+    {
+      attribution: '&copy; Esri',
+      maxZoom: 19,
+    }
+  )
+
+  const terrainShading = L.tileLayer(
+    'https://tiles.stadiamaps.com/tiles/stamen_terrain/{z}/{x}/{y}{r}.jpg',
+    {
+      attribution: '&copy; Stamen Design, &copy; OpenMapTiles',
+      maxZoom: 18,
+    }
+  )
+
   darkTiles.addTo(map)
 
   L.control.layers(
-    { 'Dark': darkTiles, 'Satellite': satellite, 'Topographic': topo },
+    {
+      'Dark': darkTiles,
+      'Satellite': satellite,
+      'Topographic': topo,
+      'Terrain Relief': topoRelief,
+      'Terrain Shading': terrainShading,
+    },
     {},
     { position: 'topright' }
   ).addTo(map)
@@ -274,6 +296,43 @@ watch(() => store.coverageResult, (result) => {
 watch(() => store.displayParams.transparency, (val) => {
   if (coverageLayer) {
     coverageLayer.setOpacity(1 - val / 100)
+  }
+})
+
+// Clean up LoS visuals when terrain profile is closed
+watch(() => store.terrainProfileOpen, (open) => {
+  if (!open) {
+    if (losLine) {
+      map.removeLayer(losLine)
+      losLine = null
+    }
+    losMarkersLayer?.clearLayers()
+  }
+})
+
+// Watch for LoS results triggered from node-to-node (store-driven)
+watch(() => store.losResult, (result) => {
+  if (!result || !map) return
+  // Only draw if losPoints are set (node-to-node triggers this)
+  if (store.losPoints.length === 2) {
+    const [p1, p2] = store.losPoints
+    // Clear previous
+    if (losLine) map.removeLayer(losLine)
+    losMarkersLayer?.clearLayers()
+
+    losLine = L.polyline(
+      [[p1.lat, p1.lon], [p2.lat, p2.lon]],
+      { color: result.is_los ? '#3fb950' : '#f85149', weight: 2, dashArray: '8, 4' }
+    ).addTo(map)
+
+    L.marker([p1.lat, p1.lon], { icon: towerIcon }).addTo(losMarkersLayer)
+    L.marker([p2.lat, p2.lon], { icon: rxIcon }).addTo(losMarkersLayer)
+
+    // Fit map to show both points
+    map.fitBounds([[p1.lat, p1.lon], [p2.lat, p2.lon]], { padding: [50, 50] })
+
+    // Clear losPoints so we don't re-trigger
+    store.losPoints = []
   }
 })
 

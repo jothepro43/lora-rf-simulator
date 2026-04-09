@@ -277,6 +277,43 @@ async function saveMqttConfig() {
   await api.updateMqttConfig(mqttConfig.value)
 }
 
+// Node-to-Node LoS
+const losNode1 = ref<number | null>(null)
+const losNode2 = ref<number | null>(null)
+
+async function runNodeToNodeLos() {
+  if (losNode1.value == null || losNode2.value == null) return
+  if (losNode1.value === losNode2.value) return
+  await store.runNodeToNodeLos(losNode1.value, losNode2.value)
+}
+
+// Custom device modal
+const showDeviceModal = ref(false)
+const customDevice = ref({
+  name: '',
+  manufacturer: '',
+  tx_power_dbm: 22,
+  rx_sensitivity_dbm: -148,
+  radio: 'SX1262',
+  connector: 'SMA',
+  notes: '',
+})
+
+async function saveCustomDevice() {
+  if (!customDevice.value.name) return
+  await store.addCustomDevice(customDevice.value)
+  showDeviceModal.value = false
+  customDevice.value = {
+    name: '',
+    manufacturer: '',
+    tx_power_dbm: 22,
+    rx_sensitivity_dbm: -148,
+    radio: 'SX1262',
+    connector: 'SMA',
+    notes: '',
+  }
+}
+
 const roles = ['CLIENT', 'CLIENT_MUTE', 'ROUTER', 'ROUTER_LATE', 'REPEATER']
 const weatherOptions = [
   { label: 'Clear', rain: 0 },
@@ -334,14 +371,17 @@ const weatherOptions = [
           </div>
           <div class="field-row">
             <label>Device</label>
-            <select
-              :value="store.currentNode.device_preset"
-              @change="(e) => store.applyDevicePreset((e.target as HTMLSelectElement).value)"
-            >
-              <option v-for="(dev, key) in store.devices" :key="key" :value="key">
-                {{ dev.name }}
-              </option>
-            </select>
+            <div class="select-with-btn">
+              <select
+                :value="store.currentNode.device_preset"
+                @change="(e) => store.applyDevicePreset((e.target as HTMLSelectElement).value)"
+              >
+                <option v-for="(dev, key) in store.devices" :key="key" :value="key">
+                  {{ dev.name }}
+                </option>
+              </select>
+              <button class="btn-add-inline" @click="showDeviceModal = true" title="Add custom device">+</button>
+            </div>
           </div>
           <div class="field-row">
             <label>Role</label>
@@ -814,6 +854,90 @@ const weatherOptions = [
           <div v-if="!store.nodes.length" class="empty-state">
             No nodes yet. Click "+ Node" on the map to add one.
           </div>
+
+          <!-- Node-to-Node LoS -->
+          <div v-if="store.nodes.length >= 2" class="los-between-nodes">
+            <div class="los-section-title">LoS Between Nodes</div>
+            <div class="field-row">
+              <label>TX Node</label>
+              <select v-model.number="losNode1">
+                <option :value="null" disabled>Select...</option>
+                <option v-for="node in store.nodes" :key="node.id" :value="node.id">
+                  {{ node.name }}
+                </option>
+              </select>
+            </div>
+            <div class="field-row">
+              <label>RX Node</label>
+              <select v-model.number="losNode2">
+                <option :value="null" disabled>Select...</option>
+                <option v-for="node in store.nodes" :key="node.id" :value="node.id">
+                  {{ node.name }}
+                </option>
+              </select>
+            </div>
+            <button
+              class="btn-los-run"
+              @click="runNodeToNodeLos"
+              :disabled="losNode1 == null || losNode2 == null || losNode1 === losNode2 || store.loading"
+            >
+              Run LoS
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Custom Device Modal -->
+      <div v-if="showDeviceModal" class="modal-overlay" @click.self="showDeviceModal = false">
+        <div class="modal">
+          <div class="modal-header">
+            <h3>Add Custom Device</h3>
+            <button class="close-btn" @click="showDeviceModal = false">&#10005;</button>
+          </div>
+          <div class="modal-body">
+            <div class="field-row">
+              <label>Device Name</label>
+              <input v-model="customDevice.name" type="text" placeholder="My Device" />
+            </div>
+            <div class="field-row">
+              <label>Manufacturer</label>
+              <input v-model="customDevice.manufacturer" type="text" placeholder="Custom" />
+            </div>
+            <div class="field-row">
+              <label>TX Power</label>
+              <div class="input-unit">
+                <input v-model.number="customDevice.tx_power_dbm" type="number" />
+                <span class="unit">dBm</span>
+              </div>
+            </div>
+            <div class="field-row">
+              <label>RX Sensitivity</label>
+              <div class="input-unit">
+                <input v-model.number="customDevice.rx_sensitivity_dbm" type="number" />
+                <span class="unit">dBm</span>
+              </div>
+            </div>
+            <div class="field-row">
+              <label>Radio Chip</label>
+              <input v-model="customDevice.radio" type="text" placeholder="SX1262" />
+            </div>
+            <div class="field-row">
+              <label>Connector</label>
+              <select v-model="customDevice.connector">
+                <option value="IPEX">IPEX</option>
+                <option value="SMA">SMA</option>
+                <option value="N-Type">N-Type</option>
+              </select>
+            </div>
+            <div class="field-row">
+              <label>Notes</label>
+              <textarea v-model="customDevice.notes" rows="2" placeholder="Optional notes"></textarea>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button class="btn-cancel" @click="showDeviceModal = false">Cancel</button>
+            <button class="btn-save" @click="saveCustomDevice" :disabled="!customDevice.name">Save Device</button>
+          </div>
         </div>
       </div>
     </div>
@@ -1213,6 +1337,129 @@ const weatherOptions = [
 
 .btn-mqtt-save:disabled {
   opacity: 0.4;
+}
+
+.los-between-nodes {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-color);
+}
+
+.los-section-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+}
+
+.btn-los-run {
+  width: 100%;
+  background: var(--accent-blue);
+  color: #fff;
+  padding: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  margin-top: 4px;
+}
+
+.btn-los-run:disabled {
+  opacity: 0.4;
+}
+
+.select-with-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  max-width: 180px;
+}
+
+.select-with-btn select {
+  flex: 1;
+  min-width: 0;
+}
+
+.btn-add-inline {
+  background: var(--bg-tertiary);
+  color: var(--accent-green);
+  border: 1px solid var(--border-color);
+  padding: 5px 8px;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.btn-add-inline:hover {
+  background: var(--accent-green);
+  color: #000;
+}
+
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.6);
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.modal {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  width: 400px;
+  max-width: 90vw;
+  max-height: 80vh;
+  overflow-y: auto;
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.modal-header h3 {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.modal-body {
+  padding: 12px 16px;
+}
+
+.modal-body textarea {
+  width: 100%;
+  resize: vertical;
+  background: var(--bg-input);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  padding: 6px 10px;
+  font-size: 13px;
+  font-family: inherit;
+}
+
+.modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border-color);
+}
+
+.btn-cancel {
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-color);
+  padding: 8px 16px;
 }
 
 @media (max-width: 900px) {

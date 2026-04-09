@@ -37,6 +37,12 @@ export const api = {
   getCables: () => request<Record<string, any>>('/data/cables'),
   getChannels: () => request<Record<string, any>>('/data/channels'),
 
+  // Custom devices
+  addCustomDevice: (device: any) =>
+    request<any>('/data/devices/custom', { method: 'POST', body: JSON.stringify(device) }),
+  deleteCustomDevice: (key: string) =>
+    request<any>(`/data/devices/custom/${encodeURIComponent(key)}`, { method: 'DELETE' }),
+
   // Nodes
   listNodes: () => request<any[]>('/nodes'),
   createNode: (node: any) => request<any>('/nodes', { method: 'POST', body: JSON.stringify(node) }),

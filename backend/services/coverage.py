@@ -298,6 +298,7 @@ def _generate_coverage_fspl(
         "stats": stats,
         "lats": lats,
         "lons": lons,
+        "_power_grid": grid_flipped,
     }
 
 
@@ -357,6 +358,11 @@ def generate_coverage(
         elapsed = time.time() - t0
         result["stats"]["elapsed_seconds"] = round(elapsed, 2)
         logger.info("FSPL-only coverage in %.2fs", elapsed)
+        logger.info(
+            "Antenna params (FSPL): azimuth=%.1f, h_beamwidth=%.1f, v_beamwidth=%.1f, f/b=%.1f dB, directional=%s",
+            antenna_azimuth_deg, antenna_h_beamwidth, antenna_v_beamwidth,
+            antenna_front_to_back_db, antenna_h_beamwidth < 360,
+        )
         return {
             "image_base64": result["image_base64"],
             "bounds": result["bounds"],
@@ -390,6 +396,13 @@ def generate_coverage(
     logger.info(
         "Radial sweep: %d radials x %d steps = %d points, radius=%.1f km, res=%.0f m",
         n_radials, n_steps, n_radials * n_steps, radius_km, resolution_m,
+    )
+    logger.info(
+        "Antenna params: azimuth=%.1f, tilt=%.1f, h_beamwidth=%.1f, v_beamwidth=%.1f, f/b=%.1f dB, directional=%s",
+        antenna_azimuth_deg, antenna_tilt_deg,
+        antenna_h_beamwidth, antenna_v_beamwidth,
+        antenna_front_to_back_db,
+        antenna_h_beamwidth < 360,
     )
 
     # Parallel radial computation
@@ -504,6 +517,7 @@ def generate_coverage(
         "min_dbm": min_dbm,
         "max_dbm": max_dbm,
         "colormap": colormap,
+        "_power_grid": power_grid,
     }
 
 
