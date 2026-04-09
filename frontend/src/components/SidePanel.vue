@@ -87,6 +87,11 @@ async function runCoverage() {
       antenna_v_beamwidth: antenna?.v_beamwidth ?? 90,
       antenna_front_to_back_db: antenna?.front_to_back_db ?? 0,
       model: store.simParams.model,
+      itm_reliability_pct: store.simParams.itm_reliability_pct,
+      itm_radio_climate: store.simParams.itm_radio_climate,
+      itm_ground_eps: store.simParams.itm_ground_eps,
+      itm_ground_sigma: store.simParams.itm_ground_sigma,
+      itm_polarization: store.simParams.itm_polarization,
     }, controller.signal)
   } catch (err: any) {
     if (err.name !== 'AbortError') {
@@ -135,6 +140,11 @@ async function runMultiCoverage() {
         antenna_v_beamwidth: antenna?.v_beamwidth ?? 90,
         antenna_front_to_back_db: antenna?.front_to_back_db ?? 0,
         model: store.simParams.model,
+        itm_reliability_pct: store.simParams.itm_reliability_pct,
+        itm_radio_climate: store.simParams.itm_radio_climate,
+        itm_ground_eps: store.simParams.itm_ground_eps,
+        itm_ground_sigma: store.simParams.itm_ground_sigma,
+        itm_polarization: store.simParams.itm_polarization,
       }
     })
     store.coverageResult = await api.simulateMultiCoverage(
@@ -196,6 +206,11 @@ async function runPrecompute() {
         antenna_v_beamwidth: antenna?.v_beamwidth ?? 90,
         antenna_front_to_back_db: antenna?.front_to_back_db ?? 0,
         model: store.simParams.model,
+        itm_reliability_pct: store.simParams.itm_reliability_pct,
+        itm_radio_climate: store.simParams.itm_radio_climate,
+        itm_ground_eps: store.simParams.itm_ground_eps,
+        itm_ground_sigma: store.simParams.itm_ground_sigma,
+        itm_polarization: store.simParams.itm_polarization,
       },
     })
     await loadPrecomputed()
@@ -253,6 +268,11 @@ async function exportCoverageKmz() {
     antenna_v_beamwidth: antenna?.v_beamwidth ?? 90,
     antenna_front_to_back_db: antenna?.front_to_back_db ?? 0,
     model: store.simParams.model,
+    itm_reliability_pct: store.simParams.itm_reliability_pct,
+    itm_radio_climate: store.simParams.itm_radio_climate,
+    itm_ground_eps: store.simParams.itm_ground_eps,
+    itm_ground_sigma: store.simParams.itm_ground_sigma,
+    itm_polarization: store.simParams.itm_polarization,
     site_name: node.name,
   }, `coverage_${node.name}.kmz`)
 }
@@ -311,6 +331,26 @@ async function saveCustomDevice() {
     radio: 'SX1262',
     connector: 'SMA',
     notes: '',
+  }
+}
+
+// ITM ground type presets: { eps_dielect, sgm_conductivity }
+const groundTypes = [
+  { label: 'Average Ground', eps: 15.0, sigma: 0.005 },
+  { label: 'Poor Ground', eps: 4.0, sigma: 0.001 },
+  { label: 'Good Ground', eps: 25.0, sigma: 0.020 },
+  { label: 'Farmland / Forest', eps: 15.0, sigma: 0.005 },
+  { label: 'City / Urban', eps: 5.0, sigma: 0.001 },
+  { label: 'Mountain / Sand', eps: 10.0, sigma: 0.002 },
+  { label: 'Fresh Water', eps: 81.0, sigma: 0.010 },
+  { label: 'Sea Water', eps: 81.0, sigma: 5.000 },
+]
+
+function applyGroundType(label: string) {
+  const gt = groundTypes.find(g => g.label === label)
+  if (gt) {
+    store.simParams.itm_ground_eps = gt.eps
+    store.simParams.itm_ground_sigma = gt.sigma
   }
 }
 
@@ -579,7 +619,8 @@ const weatherOptions = [
           <div class="field-row">
             <label>Propagation</label>
             <select v-model="store.simParams.model">
-              <option value="terrain">Full (Terrain)</option>
+              <option value="itm">ITM (Longley-Rice)</option>
+              <option value="terrain">Terrain (Fast)</option>
               <option value="fspl">Quick (FSPL only)</option>
             </select>
           </div>
@@ -587,6 +628,48 @@ const weatherOptions = [
             <label>K-Factor</label>
             <input v-model.number="store.simParams.k_factor" type="number" step="0.01" min="0.5" max="2" />
           </div>
+          <!-- ITM-specific parameters -->
+          <template v-if="store.simParams.model === 'itm'">
+            <div class="field-row">
+              <label>Reliability</label>
+              <select v-model.number="store.simParams.itm_reliability_pct">
+                <option :value="50">50% (Median)</option>
+                <option :value="70">70%</option>
+                <option :value="80">80%</option>
+                <option :value="90">90% (Conservative)</option>
+                <option :value="95">95%</option>
+                <option :value="99">99% (Most conservative)</option>
+              </select>
+            </div>
+            <div class="field-row">
+              <label>Radio Climate</label>
+              <select v-model.number="store.simParams.itm_radio_climate">
+                <option :value="1">Equatorial</option>
+                <option :value="2">Continental Subtropical</option>
+                <option :value="3">Maritime Subtropical</option>
+                <option :value="4">Desert</option>
+                <option :value="5">Continental Temperate</option>
+                <option :value="6">Maritime Temperate (Land)</option>
+                <option :value="7">Maritime Temperate (Sea)</option>
+              </select>
+            </div>
+            <div class="field-row">
+              <label>Ground Type</label>
+              <select @change="(e) => applyGroundType((e.target as HTMLSelectElement).value)">
+                <option v-for="gt in groundTypes" :key="gt.label" :value="gt.label">{{ gt.label }}</option>
+              </select>
+            </div>
+            <div class="field-row">
+              <label>Polarization</label>
+              <select v-model.number="store.simParams.itm_polarization">
+                <option :value="1">Vertical (LoRa)</option>
+                <option :value="0">Horizontal</option>
+              </select>
+            </div>
+            <div class="itm-note">
+              ITM uses full terrain profiles for accurate propagation. Slower than Terrain mode (~15-30s).
+            </div>
+          </template>
         </div>
       </div>
 
@@ -1076,6 +1159,13 @@ const weatherOptions = [
   font-size: 13px;
   color: var(--accent-teal);
   font-weight: 500;
+}
+
+.itm-note {
+  font-size: 11px;
+  color: var(--text-muted);
+  padding: 6px 0 2px;
+  line-height: 1.4;
 }
 
 .antenna-info {

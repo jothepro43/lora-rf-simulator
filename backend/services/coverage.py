@@ -1,11 +1,14 @@
 """Coverage heatmap generation service with PNG image output.
 
-Supports two computation modes:
+Supports three computation modes:
   - "terrain" (default): Radial sweep viewshed with terrain-aware diffraction.
     Sweeps 1440 radials (0.25° steps) outward from TX, tracking the horizon
     angle to decide visibility/shadow.  ~200k elevation lookups vs 3.45M in
     the old grid-per-point approach — roughly 17× fewer lookups and ~38×
     faster end-to-end.
+  - "itm": Full NTIA Longley-Rice Irregular Terrain Model.  Most accurate
+    propagation mode — uses terrain profiles to compute diffraction, scatter,
+    and variability.  360 radials processed sequentially (~15-30s).
   - "fspl": Quick FSPL-only preview.  Pure vectorised numpy, no terrain
     lookups at all.  Returns in <500 ms even for large areas.
 """
@@ -212,6 +215,118 @@ def _compute_radial(
 
 
 # ---------------------------------------------------------------------------
+# ITM (Longley-Rice) radial computation
+# ---------------------------------------------------------------------------
+
+def _compute_radial_itm(
+    tx_lat, tx_lon, tx_asl, tx_height_agl, azimuth_deg,
+    max_range_km, step_m, freq_mhz,
+    eps_dielect, sgm_conductivity, eno_ns_surfref,
+    radio_climate, pol, pct_time, pct_loc, pct_conf,
+    rx_height_m, eirp_dbm, rx_gain_dbi,
+    antenna_azimuth_deg, antenna_tilt_deg,
+    antenna_h_beamwidth, antenna_v_beamwidth,
+    antenna_front_to_back_db,
+):
+    """Compute path loss along a radial using the full ITM model.
+
+    The ITM module uses global state, so this function must NOT be called
+    from multiple threads simultaneously. Process radials sequentially.
+
+    Returns (lats, lons, rx_powers) numpy arrays.
+    """
+    from services import itm
+    from services.itm_wrapper import norm_quantile
+
+    n_steps = int(max_range_km * 1000 / step_m)
+    if n_steps < 1:
+        return np.array([]), np.array([]), np.array([])
+
+    az_rad = math.radians(azimuth_deg)
+    cos_az = math.cos(az_rad)
+    sin_az = math.sin(az_rad)
+    cos_tx = math.cos(math.radians(tx_lat))
+
+    # Generate all lat/lon points along this radial
+    distances_m = np.arange(1, n_steps + 1, dtype=np.float64) * step_m
+    dlats = (distances_m * cos_az) / 111000.0
+    dlons = (distances_m * sin_az) / (111000.0 * cos_tx)
+    lats = tx_lat + dlats
+    lons = tx_lon + dlons
+
+    # Get terrain for the full radial (TX + all points)
+    all_lats = np.concatenate([[tx_lat], lats])
+    all_lons = np.concatenate([[tx_lon], lons])
+    all_elevs = batch_get_elevation(all_lats, all_lons)
+
+    # Build ITM terrain profile for the full radial
+    num_pts = len(all_elevs)
+    full_dist = max_range_km * 1000.0
+    full_step = full_dist / (num_pts - 1)
+
+    pfl = np.zeros(num_pts + 2)
+    pfl[0] = num_pts - 1
+    pfl[1] = full_step
+    pfl[2:] = all_elevs
+
+    # Initialize ITM for this radial
+    itm.lrPrep(freq_mhz, [tx_height_agl, rx_height_m],
+                eno_ns_surfref, pol, eps_dielect, sgm_conductivity)
+    itm.lrProfile(full_dist, pfl, climate=radio_climate, mdVar=12)
+
+    # Compute quantile parameters
+    z_time = norm_quantile(pct_time / 100.0)
+    z_loc = norm_quantile(pct_loc / 100.0)
+    z_conf = norm_quantile(pct_conf / 100.0)
+
+    # Step along the radial computing path loss at each distance
+    rx_powers = np.full(n_steps, -999.0, dtype=np.float64)
+    for i in range(n_steps):
+        d = distances_m[i]
+        if d < 10.0:
+            continue
+        itm.lrProp(d)
+        path_loss = itm.aVar(z_time, z_loc, z_conf)
+
+        rx_power = eirp_dbm - path_loss + rx_gain_dbi
+        rx_powers[i] = rx_power
+
+    # Apply directional antenna reduction
+    if antenna_h_beamwidth < 360:
+        h_offset = abs(azimuth_deg - antenna_azimuth_deg)
+        if h_offset > 180:
+            h_offset = 360 - h_offset
+        h_half = antenna_h_beamwidth / 2
+        if h_offset <= h_half:
+            h_reduction = 12 * (h_offset / h_half) ** 2
+        elif h_offset <= 90:
+            h_reduction = 12 + (h_offset - h_half) / (90 - h_half) * (antenna_front_to_back_db - 12)
+        else:
+            h_reduction = antenna_front_to_back_db
+
+        # Apply horizontal reduction to all valid points
+        valid = rx_powers > -999.0
+        rx_powers[valid] -= h_reduction
+
+        # Vertical component (varies per point)
+        for i in range(n_steps):
+            if rx_powers[i] <= -999.0:
+                continue
+            tilt_to_point = math.degrees(math.atan2(
+                (all_elevs[i + 1] + rx_height_m) - tx_asl, distances_m[i]
+            ))
+            v_offset = abs(tilt_to_point - antenna_tilt_deg)
+            v_half_bw = antenna_v_beamwidth / 2
+            if v_offset <= v_half_bw:
+                v_reduction = 12 * (v_offset / v_half_bw) ** 2
+            else:
+                v_reduction = min(30.0, 12.0 + (v_offset - v_half_bw) * 0.5)
+            rx_powers[i] -= v_reduction
+
+    return lats, lons, rx_powers
+
+
+# ---------------------------------------------------------------------------
 # FSPL-only quick preview (fully vectorised)
 # ---------------------------------------------------------------------------
 
@@ -331,12 +446,24 @@ def generate_coverage(
     antenna_v_beamwidth: float = 90.0,
     antenna_front_to_back_db: float = 0.0,
     model: str = "terrain",
+    # ITM-specific parameters
+    itm_reliability_pct: float = 50.0,
+    itm_radio_climate: int = 5,
+    itm_ground_eps: float = 15.0,
+    itm_ground_sigma: float = 0.005,
+    itm_polarization: int = 1,
 ) -> dict:
     """Generate coverage as a PNG image overlay.
 
     Args:
         model: "terrain" for radial-sweep viewshed (default),
+               "itm" for full Longley-Rice ITM model,
                "fspl" for quick FSPL-only preview.
+        itm_reliability_pct: ITM reliability percentage (50-99)
+        itm_radio_climate: ITM radio climate (1-7)
+        itm_ground_eps: Ground dielectric constant
+        itm_ground_sigma: Ground conductivity S/m
+        itm_polarization: 0=horizontal, 1=vertical
 
     Returns base64-encoded PNG, Leaflet-style bounds, and summary stats.
     """
@@ -375,6 +502,125 @@ def generate_coverage(
             "min_dbm": min_dbm,
             "max_dbm": max_dbm,
             "colormap": colormap,
+        }
+
+    # ------------------------------------------------------------------
+    # ITM (Longley-Rice) radial sweep — most accurate, sequential
+    # ------------------------------------------------------------------
+    if model == "itm":
+        radius_m = radius_km * 1000.0
+        cos_lat = math.cos(math.radians(tx_lat))
+
+        tx_ground = get_elevation(tx_lat, tx_lon)
+        tx_asl = tx_ground + tx_height_m
+
+        # Use 1° angular steps (360 radials) for ITM to keep runtime reasonable
+        angular_step = 1.0
+        n_radials = int(360 / angular_step)
+
+        logger.info(
+            "ITM radial sweep: %d radials, radius=%.1f km, res=%.0f m, reliability=%.0f%%",
+            n_radials, radius_km, resolution_m, itm_reliability_pct,
+        )
+
+        all_lats = []
+        all_lons = []
+        all_powers = []
+
+        # ITM uses module-level globals — process radials SEQUENTIALLY
+        for i in range(n_radials):
+            azimuth = i * angular_step
+            lats_r, lons_r, powers_r = _compute_radial_itm(
+                tx_lat, tx_lon, tx_asl, tx_height_m, azimuth,
+                radius_km, resolution_m, frequency_mhz,
+                itm_ground_eps, itm_ground_sigma, 301.0,
+                itm_radio_climate, itm_polarization,
+                itm_reliability_pct, itm_reliability_pct, itm_reliability_pct,
+                rx_height_m, eirp_dbm, rx_gain_dbi,
+                antenna_azimuth_deg, antenna_tilt_deg,
+                antenna_h_beamwidth, antenna_v_beamwidth,
+                antenna_front_to_back_db,
+            )
+            if len(lats_r) > 0:
+                all_lats.append(lats_r)
+                all_lons.append(lons_r)
+                all_powers.append(powers_r)
+
+            if (i + 1) % 60 == 0:
+                elapsed = time.time() - t0
+                eta = elapsed / (i + 1) * (n_radials - i - 1)
+                logger.info(
+                    "  ITM progress: %d/%d (%.0f%%) – %.1fs elapsed, ~%.1fs remaining",
+                    i + 1, n_radials, 100 * (i + 1) / n_radials, elapsed, eta,
+                )
+
+        # Concatenate all radial results
+        all_lats = np.concatenate(all_lats)
+        all_lons = np.concatenate(all_lons)
+        all_powers = np.concatenate(all_powers)
+
+        # Rasterise radial points -> rectangular grid
+        lat_min = tx_lat - radius_km / 111.0
+        lat_max = tx_lat + radius_km / 111.0
+        lon_min = tx_lon - radius_km / (111.0 * cos_lat)
+        lon_max = tx_lon + radius_km / (111.0 * cos_lat)
+
+        grid_rows = max(1, int((lat_max - lat_min) * 111000 / resolution_m))
+        grid_cols = max(1, int((lon_max - lon_min) * 111000 * cos_lat / resolution_m))
+
+        power_grid = np.full((grid_rows, grid_cols), -999.0, dtype=np.float64)
+
+        row_indices = ((lat_max - all_lats) / (lat_max - lat_min) * grid_rows).astype(int)
+        col_indices = ((all_lons - lon_min) / (lon_max - lon_min) * grid_cols).astype(int)
+
+        valid_mask = (
+            (row_indices >= 0) & (row_indices < grid_rows) &
+            (col_indices >= 0) & (col_indices < grid_cols)
+        )
+        row_indices = row_indices[valid_mask]
+        col_indices = col_indices[valid_mask]
+        powers = all_powers[valid_mask]
+
+        for idx in range(len(row_indices)):
+            r, c, p = row_indices[idx], col_indices[idx], powers[idx]
+            if p > power_grid[r, c]:
+                power_grid[r, c] = p
+
+        _fill_gaps(power_grid)
+
+        elapsed = time.time() - t0
+        logger.info("ITM coverage complete in %.1fs", elapsed)
+
+        image_base64 = power_to_image(
+            power_grid, min_dbm=min_dbm, max_dbm=max_dbm,
+            colormap=colormap, sensitivity=rx_sensitivity_dbm,
+        )
+
+        valid = power_grid[power_grid > -999]
+        stats = {}
+        if len(valid) > 0:
+            stats = {
+                "min_power_dbm": round(float(np.min(valid)), 1),
+                "max_power_dbm": round(float(np.max(valid)), 1),
+                "mean_power_dbm": round(float(np.mean(valid)), 1),
+                "cells_computed": int(len(valid)),
+                "cells_total": int(grid_rows * grid_cols),
+                "elapsed_seconds": round(elapsed, 1),
+            }
+
+        return {
+            "image_base64": image_base64,
+            "bounds": [[float(lat_min), float(lon_min)], [float(lat_max), float(lon_max)]],
+            "stats": stats,
+            "resolution_m": resolution_m,
+            "radius_km": radius_km,
+            "eirp_dbm": round(eirp_dbm, 1),
+            "tx_lat": tx_lat,
+            "tx_lon": tx_lon,
+            "min_dbm": min_dbm,
+            "max_dbm": max_dbm,
+            "colormap": colormap,
+            "_power_grid": power_grid,
         }
 
     # ------------------------------------------------------------------

@@ -48,7 +48,13 @@ class CoverageRequest(BaseModel):
     antenna_h_beamwidth: float = 360.0
     antenna_v_beamwidth: float = 90.0
     antenna_front_to_back_db: float = 0.0
-    model: str = "terrain"  # "terrain" (radial sweep) or "fspl" (quick preview)
+    model: str = "terrain"  # "terrain", "itm", or "fspl"
+    # ITM (Longley-Rice) parameters
+    itm_reliability_pct: float = 50.0   # 50-99
+    itm_radio_climate: int = 5          # 1-7
+    itm_ground_eps: float = 15.0        # dielectric constant
+    itm_ground_sigma: float = 0.005     # conductivity S/m
+    itm_polarization: int = 1           # 0=horizontal, 1=vertical
 
 
 class LinkBudgetRequest(BaseModel):
@@ -123,6 +129,11 @@ def simulate_coverage(req: CoverageRequest):
         antenna_v_beamwidth=req.antenna_v_beamwidth,
         antenna_front_to_back_db=req.antenna_front_to_back_db,
         model=req.model,
+        itm_reliability_pct=req.itm_reliability_pct,
+        itm_radio_climate=req.itm_radio_climate,
+        itm_ground_eps=req.itm_ground_eps,
+        itm_ground_sigma=req.itm_ground_sigma,
+        itm_polarization=req.itm_polarization,
     )
     # Strip internal numpy grid from response
     result.pop("_power_grid", None)
@@ -209,6 +220,11 @@ def simulate_multi_coverage(req: MultiCoverageRequest):
             antenna_v_beamwidth=node_req.antenna_v_beamwidth,
             antenna_front_to_back_db=node_req.antenna_front_to_back_db,
             model=node_req.model,
+            itm_reliability_pct=node_req.itm_reliability_pct,
+            itm_radio_climate=node_req.itm_radio_climate,
+            itm_ground_eps=node_req.itm_ground_eps,
+            itm_ground_sigma=node_req.itm_ground_sigma,
+            itm_polarization=node_req.itm_polarization,
         )
 
         # Use the raw power grid returned by generate_coverage
@@ -362,6 +378,11 @@ def precompute_coverage(req: PrecomputeRequest):
         antenna_v_beamwidth=req.coverage.antenna_v_beamwidth,
         antenna_front_to_back_db=req.coverage.antenna_front_to_back_db,
         model=req.coverage.model,
+        itm_reliability_pct=req.coverage.itm_reliability_pct,
+        itm_radio_climate=req.coverage.itm_radio_climate,
+        itm_ground_eps=req.coverage.itm_ground_eps,
+        itm_ground_sigma=req.coverage.itm_ground_sigma,
+        itm_polarization=req.coverage.itm_polarization,
     )
 
     # Strip internal numpy grid before caching

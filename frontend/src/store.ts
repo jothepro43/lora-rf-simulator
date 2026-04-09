@@ -57,6 +57,12 @@ export const useStore = defineStore('main', () => {
     model: 'terrain',
     environment: 'temperate',
     noise_floor_dbm: -120,
+    // ITM (Longley-Rice) parameters
+    itm_reliability_pct: 50,
+    itm_radio_climate: 5,
+    itm_ground_eps: 15.0,
+    itm_ground_sigma: 0.005,
+    itm_polarization: 1,
   })
 
   // Display parameters
