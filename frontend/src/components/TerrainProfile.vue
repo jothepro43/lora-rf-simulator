@@ -5,6 +5,26 @@ import { Chart, registerables } from 'chart.js'
 
 Chart.register(...registerables)
 
+// Vertical crosshair plugin
+const crosshairPlugin = {
+  id: 'crosshair',
+  afterDraw: (chart: any) => {
+    if (!chart.tooltip?._active?.length) return
+    const x = chart.tooltip._active[0].element.x
+    const ctx = chart.ctx
+    const yAxis = chart.scales.y
+    ctx.save()
+    ctx.beginPath()
+    ctx.moveTo(x, yAxis.top)
+    ctx.lineTo(x, yAxis.bottom)
+    ctx.lineWidth = 1
+    ctx.strokeStyle = 'rgba(88, 166, 255, 0.6)'
+    ctx.setLineDash([4, 4])
+    ctx.stroke()
+    ctx.restore()
+  }
+}
+
 const store = useStore()
 const canvasRef = ref<HTMLCanvasElement>()
 let chartInstance: Chart | null = null
@@ -62,10 +82,53 @@ function renderChart() {
         },
       ],
     },
+    plugins: [crosshairPlugin],
     options: {
       responsive: true,
       maintainAspectRatio: false,
       animation: { duration: 300 },
+      interaction: {
+        mode: 'index',
+        intersect: false,
+      },
+      onHover: (_event: any, elements: any[]) => {
+        if (elements.length > 0) {
+          const idx = elements[0].index
+          if (result && result.lats && result.lons) {
+            store.losHoverPoint = {
+              lat: result.lats[idx],
+              lon: result.lons[idx],
+              distance_km: result.distances[idx] / 1000,
+              elevation_m: result.elevations[idx],
+              index: idx,
+            }
+          }
+        } else {
+          store.losHoverPoint = null
+        }
+      },
+      onClick: (_event: any, elements: any[]) => {
+        if (elements.length > 0) {
+          const idx = elements[0].index
+          if (result && result.lats && result.lons) {
+            const lat = result.lats[idx]
+            const lon = result.lons[idx]
+            const elev = result.elevations[idx]
+            const los_h = result.los_heights[idx]
+            const isBlocked = elev > los_h
+
+            store.panRequest = { lat, lon }
+            store.losInspectPoint = {
+              lat, lon,
+              elevation_m: elev,
+              los_height_m: los_h,
+              is_obstruction: isBlocked,
+              distance_km: result.distances[idx] / 1000,
+              intrusion_m: isBlocked ? elev - los_h : 0,
+            }
+          }
+        }
+      },
       plugins: {
         legend: {
           display: true,
@@ -78,14 +141,37 @@ function renderChart() {
           },
         },
         tooltip: {
+          mode: 'index',
+          intersect: false,
           backgroundColor: '#21262d',
           titleColor: '#e6edf3',
           bodyColor: '#8b949e',
           borderColor: '#30363d',
           borderWidth: 1,
           callbacks: {
-            title: (items: any) => `Distance: ${items[0].label} km`,
-            label: (item: any) => `${item.dataset.label}: ${item.formattedValue} m`,
+            title: (items: any) => {
+              const idx = items[0].dataIndex
+              const dist_km = (result.distances[idx] / 1000).toFixed(2)
+              const lat = result.lats?.[idx]?.toFixed(5) || '?'
+              const lon = result.lons?.[idx]?.toFixed(5) || '?'
+              return `Distance: ${dist_km} km | ${lat}, ${lon}`
+            },
+            label: (item: any) => {
+              const idx = item.dataIndex
+              const val = Number(item.raw).toFixed(1)
+              if (item.datasetIndex === 0) {
+                // Terrain dataset - show clearance info
+                const elev = result.elevations[idx]
+                const losH = result.los_heights[idx]
+                const clearance = losH - elev
+                const status = clearance < 0 ? 'BLOCKED' : 'Clear'
+                return [
+                  `Terrain: ${val} m ASL`,
+                  `Clearance: ${clearance.toFixed(1)} m (${status})`,
+                ]
+              }
+              return `${item.dataset.label}: ${val} m`
+            },
           },
         },
       },
@@ -104,6 +190,14 @@ function renderChart() {
     },
   })
 }
+
+// Clean up hover state when chart is not visible
+watch(() => store.terrainProfileOpen, (open) => {
+  if (!open) {
+    store.losHoverPoint = null
+    store.losInspectPoint = null
+  }
+})
 
 watch(() => store.losResult, async () => {
   await nextTick()

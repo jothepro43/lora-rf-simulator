@@ -25,6 +25,15 @@ export const useStore = defineStore('main', () => {
   const terrainProfileOpen = ref(false)
   const coverageAbort = ref<AbortController | null>(null)
 
+  // LoS interactive profile state
+  const losHoverPoint = ref<{
+    lat: number; lon: number; distance_km: number; elevation_m: number; index: number
+  } | null>(null)
+  const losInspectPoint = ref<{
+    lat: number; lon: number; elevation_m: number; los_height_m: number;
+    is_obstruction: boolean; distance_km: number; intrusion_m: number
+  } | null>(null)
+
   // Current node being edited
   const currentNode = ref<NodeData>({
     name: 'Site',
@@ -204,7 +213,7 @@ export const useStore = defineStore('main', () => {
     devices, antennas, cables, channels,
     nodes, selectedNodeId, selectedNode,
     panRequest, sidebarOpen, activeMode, losPoints, losResult, coverageResult,
-    loading, terrainProfileOpen, coverageAbort,
+    loading, terrainProfileOpen, coverageAbort, losHoverPoint, losInspectPoint,
     currentNode, simParams, displayParams,
     loadCatalogs, loadNodes, saveNode, deleteNode,
     applyDevicePreset, applyAntennaPreset, applyChannelPreset,

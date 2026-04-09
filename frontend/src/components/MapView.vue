@@ -12,6 +12,9 @@ let markersLayer: L.LayerGroup
 let coverageLayer: L.ImageOverlay | null = null
 let losMarkersLayer: L.LayerGroup
 let losLine: L.Polyline | null = null
+let losSegmentsLayer: L.LayerGroup | null = null
+let losCursorMarker: L.CircleMarker | null = null
+let losInspectMarker: L.Marker | null = null
 let legendControl: L.Control | null = null
 
 // Search state
@@ -153,6 +156,7 @@ onMounted(() => {
 
   markersLayer = L.layerGroup().addTo(map)
   losMarkersLayer = L.layerGroup().addTo(map)
+  losSegmentsLayer = L.layerGroup().addTo(map)
 
   // Prevent map interaction on search box
   if (searchContainer.value) {
@@ -252,12 +256,10 @@ async function runLoS() {
     store.losResult = result
     store.terrainProfileOpen = true
 
-    // Draw LoS line
-    if (losLine) map.removeLayer(losLine)
-    losLine = L.polyline(
-      [[p1.lat, p1.lon], [p2.lat, p2.lon]],
-      { color: result.is_los ? '#3fb950' : '#f85149', weight: 2, dashArray: '8, 4' }
-    ).addTo(map)
+    // Draw segmented LoS line (green=clear, red=blocked)
+    if (losLine) { map.removeLayer(losLine); losLine = null }
+    losSegmentsLayer?.clearLayers()
+    drawLosSegments(result)
 
     // Add RX marker
     L.marker([p2.lat, p2.lon], { icon: rxIcon }).addTo(losMarkersLayer)
@@ -267,6 +269,21 @@ async function runLoS() {
     store.loading = false
     store.losPoints = []
     store.activeMode = 'none'
+  }
+}
+
+function drawLosSegments(result: any) {
+  if (!result?.lats || !losSegmentsLayer) return
+  const latlngs: [number, number][] = result.lats.map((lat: number, i: number) => [lat, result.lons[i]])
+  for (let i = 0; i < latlngs.length - 1; i++) {
+    const elev = result.elevations[i]
+    const losH = result.los_heights[i]
+    const isBlocked = elev > losH
+    L.polyline([latlngs[i], latlngs[i + 1]], {
+      color: isBlocked ? '#f85149' : '#3fb950',
+      weight: 3,
+      opacity: 0.8,
+    }).addTo(losSegmentsLayer!)
   }
 }
 
@@ -445,6 +462,15 @@ watch(() => store.terrainProfileOpen, (open) => {
       losLine = null
     }
     losMarkersLayer?.clearLayers()
+    losSegmentsLayer?.clearLayers()
+    if (losCursorMarker) {
+      map.removeLayer(losCursorMarker)
+      losCursorMarker = null
+    }
+    if (losInspectMarker) {
+      map.removeLayer(losInspectMarker)
+      losInspectMarker = null
+    }
   }
 })
 
@@ -455,13 +481,12 @@ watch(() => store.losResult, (result) => {
   if (store.losPoints.length === 2) {
     const [p1, p2] = store.losPoints
     // Clear previous
-    if (losLine) map.removeLayer(losLine)
+    if (losLine) { map.removeLayer(losLine); losLine = null }
     losMarkersLayer?.clearLayers()
+    losSegmentsLayer?.clearLayers()
 
-    losLine = L.polyline(
-      [[p1.lat, p1.lon], [p2.lat, p2.lon]],
-      { color: result.is_los ? '#3fb950' : '#f85149', weight: 2, dashArray: '8, 4' }
-    ).addTo(map)
+    // Draw segmented colored line
+    drawLosSegments(result)
 
     L.marker([p1.lat, p1.lon], { icon: towerIcon }).addTo(losMarkersLayer)
     L.marker([p2.lat, p2.lon], { icon: rxIcon }).addTo(losMarkersLayer)
@@ -472,6 +497,59 @@ watch(() => store.losResult, (result) => {
     // Clear losPoints so we don't re-trigger
     store.losPoints = []
   }
+})
+
+// Watch LoS hover point — move cursor marker on map
+watch(() => store.losHoverPoint, (point) => {
+  if (losCursorMarker) {
+    map.removeLayer(losCursorMarker)
+    losCursorMarker = null
+  }
+  if (point) {
+    losCursorMarker = L.circleMarker([point.lat, point.lon], {
+      radius: 6,
+      color: '#58a6ff',
+      fillColor: '#58a6ff',
+      fillOpacity: 0.9,
+      weight: 2,
+    }).addTo(map)
+
+    losCursorMarker.bindTooltip(
+      `${point.elevation_m.toFixed(0)}m ASL<br>${point.distance_km.toFixed(2)} km<br>${point.lat.toFixed(5)}, ${point.lon.toFixed(5)}`,
+      { permanent: true, direction: 'top', offset: [0, -10], className: 'cursor-tooltip' }
+    )
+  }
+})
+
+// Watch LoS inspect point — persistent marker with popup on click
+watch(() => store.losInspectPoint, (point) => {
+  if (losInspectMarker) {
+    map.removeLayer(losInspectMarker)
+    losInspectMarker = null
+  }
+  if (!point) return
+
+  const color = point.is_obstruction ? '#f85149' : '#3fb950'
+  const icon = L.divIcon({
+    html: `<div style="background:${color};width:12px;height:12px;border-radius:50%;border:2px solid #fff;box-shadow:0 0 8px ${color}80;"></div>`,
+    className: '',
+    iconSize: [12, 12],
+    iconAnchor: [6, 6],
+  })
+
+  losInspectMarker = L.marker([point.lat, point.lon], { icon }).addTo(map)
+  losInspectMarker.bindPopup(`
+    <div style="color:#000;">
+      <b>${point.is_obstruction ? 'Obstruction' : 'Clear'}</b><br/>
+      <b>Coords:</b> ${point.lat.toFixed(5)}, ${point.lon.toFixed(5)}<br/>
+      <b>Elevation:</b> ${point.elevation_m.toFixed(0)}m ASL<br/>
+      <b>LoS height:</b> ${point.los_height_m.toFixed(0)}m ASL<br/>
+      ${point.is_obstruction ? `<b>Intrusion:</b> ${point.intrusion_m.toFixed(1)}m above LoS<br/>` : ''}
+      <b>Distance from TX:</b> ${point.distance_km.toFixed(2)} km
+    </div>
+  `).openPopup()
+
+  map.panTo([point.lat, point.lon])
 })
 
 // Watch nodes changes
@@ -778,5 +856,17 @@ watch(() => store.panRequest, (req) => {
   font-size: 11px;
   color: var(--text-muted);
   margin-top: 2px;
+}
+</style>
+
+<style>
+/* Unscoped so it applies to Leaflet tooltip DOM */
+.cursor-tooltip {
+  background: rgba(22, 27, 34, 0.92) !important;
+  color: #e6edf3 !important;
+  border: 1px solid #30363d !important;
+  border-radius: 4px !important;
+  font-size: 11px !important;
+  padding: 4px 8px !important;
 }
 </style>
