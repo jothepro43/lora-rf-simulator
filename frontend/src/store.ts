@@ -15,6 +15,7 @@ export const useStore = defineStore('main', () => {
   const selectedNodeId = ref<number | null>(null)
 
   // UI state
+  const panRequest = ref<{ lat: number; lon: number } | null>(null)
   const sidebarOpen = ref(true)
   const activeMode = ref<'place' | 'los' | 'coverage' | 'none'>('none')
   const losPoints = ref<{ lat: number; lon: number }[]>([])
@@ -202,7 +203,7 @@ export const useStore = defineStore('main', () => {
   return {
     devices, antennas, cables, channels,
     nodes, selectedNodeId, selectedNode,
-    sidebarOpen, activeMode, losPoints, losResult, coverageResult,
+    panRequest, sidebarOpen, activeMode, losPoints, losResult, coverageResult,
     loading, terrainProfileOpen, coverageAbort,
     currentNode, simParams, displayParams,
     loadCatalogs, loadNodes, saveNode, deleteNode,

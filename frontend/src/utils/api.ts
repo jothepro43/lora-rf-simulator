@@ -53,6 +53,7 @@ export const api = {
 
   // Terrain
   getElevation: (lat: number, lon: number) => request<any>(`/terrain/elevation?lat=${lat}&lon=${lon}`),
+  geocode: (q: string) => request<any[]>(`/terrain/geocode?q=${encodeURIComponent(q)}`),
 
   // Simulation
   simulateLos: (data: any) => request<any>('/simulate/los', { method: 'POST', body: JSON.stringify(data) }),

@@ -6,12 +6,19 @@ import { api } from '../utils/api'
 
 const store = useStore()
 const mapContainer = ref<HTMLDivElement>()
+const searchContainer = ref<HTMLDivElement>()
 let map: L.Map
 let markersLayer: L.LayerGroup
 let coverageLayer: L.ImageOverlay | null = null
 let losMarkersLayer: L.LayerGroup
 let losLine: L.Polyline | null = null
 let legendControl: L.Control | null = null
+
+// Search state
+const searchQuery = ref('')
+const searchResults = ref<any[]>([])
+let searchTimeout: ReturnType<typeof setTimeout> | null = null
+let tempMarker: L.Marker | null = null
 
 // Fix default marker icons
 delete (L.Icon.Default.prototype as any)._getIconUrl
@@ -147,6 +154,17 @@ onMounted(() => {
   markersLayer = L.layerGroup().addTo(map)
   losMarkersLayer = L.layerGroup().addTo(map)
 
+  // Prevent map interaction on search box
+  if (searchContainer.value) {
+    L.DomEvent.disableClickPropagation(searchContainer.value)
+    L.DomEvent.disableScrollPropagation(searchContainer.value)
+  }
+
+  // Close search dropdown on map click
+  map.on('mousedown', () => {
+    searchResults.value = []
+  })
+
   // Map click handler
   map.on('click', async (e: L.LeafletMouseEvent) => {
     const { lat, lng: lon } = e.latlng
@@ -204,6 +222,11 @@ function refreshMarkers() {
         await api.updateNode(node.id, { lat: pos.lat, lon: pos.lng })
         node.lat = pos.lat
         node.lon = pos.lng
+        // Update sidebar if this is the selected node
+        if (store.selectedNodeId === node.id) {
+          store.currentNode.lat = pos.lat
+          store.currentNode.lon = pos.lng
+        }
       }
     })
     marker.addTo(markersLayer)
@@ -268,6 +291,121 @@ function cancelCoverage() {
     store.coverageAbort.abort()
     store.coverageAbort = null
     store.loading = false
+  }
+}
+
+// --- Search functions ---
+
+function onSearchInput() {
+  if (searchTimeout) clearTimeout(searchTimeout)
+  if (searchQuery.value.length < 3) {
+    searchResults.value = []
+    return
+  }
+  searchTimeout = setTimeout(async () => {
+    try {
+      searchResults.value = await api.geocode(searchQuery.value)
+    } catch {
+      searchResults.value = []
+    }
+  }, 300)
+}
+
+async function searchLocation() {
+  if (searchQuery.value.length < 3) return
+  if (searchTimeout) clearTimeout(searchTimeout)
+  try {
+    searchResults.value = await api.geocode(searchQuery.value)
+    if (searchResults.value.length === 1) {
+      selectSearchResult(searchResults.value[0])
+    }
+  } catch {
+    searchResults.value = []
+  }
+}
+
+function clearSearch() {
+  searchQuery.value = ''
+  searchResults.value = []
+  if (tempMarker) {
+    map.removeLayer(tempMarker)
+    tempMarker = null
+  }
+}
+
+function selectSearchResult(result: any) {
+  searchResults.value = []
+  searchQuery.value = result.display_name
+
+  // Remove previous temp marker
+  if (tempMarker) {
+    map.removeLayer(tempMarker)
+    tempMarker = null
+  }
+
+  map.setView([result.lat, result.lon], 15)
+
+  // Update sidebar lat/lon
+  store.currentNode.lat = parseFloat(result.lat.toFixed(6))
+  store.currentNode.lon = parseFloat(result.lon.toFixed(6))
+
+  if (store.activeMode === 'place') {
+    // Immediately place a node
+    const newNode = {
+      ...store.currentNode,
+      id: undefined,
+      lat: parseFloat(result.lat.toFixed(6)),
+      lon: parseFloat(result.lon.toFixed(6)),
+      name: result.display_name.split(',')[0],
+    }
+    store.saveNode(newNode).then(() => refreshMarkers())
+  } else {
+    // Drop a temporary marker with "Place Node Here" popup
+    const escapedName = result.display_name.split(',')[0].replace(/'/g, '')
+    tempMarker = L.marker([result.lat, result.lon], {
+      icon: L.divIcon({
+        html: '<div style="background:#d29922;width:16px;height:16px;border-radius:50%;border:3px solid #fff;box-shadow:0 0 12px rgba(210,153,34,0.8);"></div>',
+        className: '',
+        iconSize: [16, 16],
+        iconAnchor: [8, 8],
+      }),
+    }).addTo(map)
+
+    tempMarker.bindPopup(`
+      <div style="color:#000;text-align:center;">
+        <b>${escapedName}</b><br/>
+        <small>${result.lat.toFixed(5)}, ${result.lon.toFixed(5)}</small><br/>
+        <button onclick="window.__placeNodeAtSearch(${result.lat},${result.lon},'${escapedName}')"
+                style="margin-top:8px;padding:6px 16px;background:#3fb950;color:#000;border:none;border-radius:4px;cursor:pointer;font-weight:600;">
+          Place Node Here
+        </button>
+      </div>
+    `).openPopup()
+
+    tempMarker.on('popupclose', () => {
+      if (tempMarker) {
+        map.removeLayer(tempMarker)
+        tempMarker = null
+      }
+    })
+  }
+}
+
+// Global callback for popup button
+;(window as any).__placeNodeAtSearch = async (lat: number, lon: number, name: string) => {
+  const newNode = {
+    ...store.currentNode,
+    id: undefined,
+    lat: parseFloat(lat.toFixed(6)),
+    lon: parseFloat(lon.toFixed(6)),
+    name,
+  }
+  await store.saveNode(newNode)
+  refreshMarkers()
+  map.closePopup()
+  if (tempMarker) {
+    map.removeLayer(tempMarker)
+    tempMarker = null
   }
 }
 
@@ -338,6 +476,14 @@ watch(() => store.losResult, (result) => {
 
 // Watch nodes changes
 watch(() => store.nodes, () => refreshMarkers(), { deep: true })
+
+// Watch for pan requests from sidebar
+watch(() => store.panRequest, (req) => {
+  if (req && map) {
+    map.setView([req.lat, req.lon], Math.max(map.getZoom(), 14))
+    store.panRequest = null
+  }
+})
 </script>
 
 <template>
@@ -375,6 +521,34 @@ watch(() => store.nodes, () => refreshMarkers(), { deep: true })
         Export PNG
       </button>
     </div>
+
+    <!-- Map search box -->
+    <div ref="searchContainer" class="map-search-container">
+      <div class="map-search-box">
+        <span class="search-icon">&#128269;</span>
+        <input
+          v-model="searchQuery"
+          type="text"
+          placeholder="Search location (e.g., Nesbitt Building, Dahlonega GA, Yonah Mountain)"
+          @keyup.enter="searchLocation"
+          @input="onSearchInput"
+          class="search-input"
+        />
+        <button v-if="searchQuery" @click="clearSearch" class="clear-btn">&#10005;</button>
+      </div>
+      <div v-if="searchResults.length" class="search-results-dropdown">
+        <div
+          v-for="(result, idx) in searchResults"
+          :key="idx"
+          @click="selectSearchResult(result)"
+          class="search-result-item"
+        >
+          <span class="result-name">{{ result.display_name }}</span>
+          <span class="result-coords">{{ result.lat.toFixed(4) }}, {{ result.lon.toFixed(4) }}</span>
+        </div>
+      </div>
+    </div>
+
     <div v-if="store.activeMode === 'place'" class="map-hint">
       Click map to place node
     </div>
@@ -520,5 +694,89 @@ watch(() => store.nodes, () => refreshMarkers(), { deep: true })
 
 @keyframes spin {
   to { transform: rotate(360deg); }
+}
+
+/* Map search box */
+.map-search-container {
+  position: absolute;
+  top: 55px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1000;
+  width: 450px;
+  max-width: 90vw;
+}
+
+.map-search-box {
+  display: flex;
+  align-items: center;
+  background: rgba(22, 27, 34, 0.95);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 4px 12px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(8px);
+}
+
+.search-icon {
+  font-size: 16px;
+  margin-right: 8px;
+  opacity: 0.6;
+}
+
+.search-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: var(--text-primary);
+  font-size: 14px;
+  padding: 8px 0;
+  outline: none;
+}
+
+.search-input::placeholder {
+  color: var(--text-muted);
+}
+
+.clear-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 14px;
+  cursor: pointer;
+  padding: 4px;
+}
+
+.search-results-dropdown {
+  background: rgba(22, 27, 34, 0.97);
+  border: 1px solid var(--border-color);
+  border-radius: 0 0 8px 8px;
+  border-top: none;
+  max-height: 250px;
+  overflow-y: auto;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+.search-result-item {
+  padding: 10px 16px;
+  cursor: pointer;
+  border-bottom: 1px solid rgba(48, 54, 61, 0.5);
+  display: flex;
+  flex-direction: column;
+}
+
+.search-result-item:hover {
+  background: rgba(88, 166, 255, 0.1);
+}
+
+.result-name {
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.result-coords {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 2px;
 }
 </style>

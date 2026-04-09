@@ -1,5 +1,6 @@
 """Terrain query API endpoints."""
 
+import httpx
 from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
@@ -28,6 +29,29 @@ def get_elevation(
 def get_profile(req: ProfileRequest):
     from services.terrain import get_terrain_profile
     return get_terrain_profile(req.lat1, req.lon1, req.lat2, req.lon2, req.num_points)
+
+
+@router.get("/geocode")
+async def geocode(q: str = Query(..., description="Search query (address, place name, etc.)")):
+    """Forward geocode using OpenStreetMap Nominatim."""
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(
+            "https://nominatim.openstreetmap.org/search",
+            params={"q": q, "format": "json", "limit": 5, "addressdetails": 1},
+            headers={"User-Agent": "LoRa-RF-Simulator/1.0"},
+            timeout=10.0,
+        )
+        resp.raise_for_status()
+        results = resp.json()
+    return [
+        {
+            "display_name": r["display_name"],
+            "lat": float(r["lat"]),
+            "lon": float(r["lon"]),
+            "type": r.get("type", ""),
+        }
+        for r in results
+    ]
 
 
 @router.get("/tile-status")

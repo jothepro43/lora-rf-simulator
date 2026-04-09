@@ -459,7 +459,14 @@ function applyClutterProfile(key: string) {
           </div>
           <div class="field-row">
             <label>Longitude</label>
-            <input v-model.number="store.currentNode.lon" type="number" step="0.00001" />
+            <div class="input-with-goto">
+              <input v-model.number="store.currentNode.lon" type="number" step="0.00001" />
+              <button
+                class="goto-btn"
+                @click="store.panRequest = { lat: store.currentNode.lat, lon: store.currentNode.lon }"
+                title="Pan map to this location"
+              >&#128205;</button>
+            </div>
           </div>
           <div class="field-row">
             <label>Height AGL</label>
@@ -1226,6 +1233,36 @@ function applyClutterProfile(key: string) {
   flex: 1;
   min-width: 0;
   max-width: 180px;
+}
+
+.input-with-goto {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  max-width: 180px;
+}
+
+.input-with-goto input {
+  flex: 1;
+  min-width: 0;
+}
+
+.goto-btn {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+  padding: 4px 6px;
+  font-size: 14px;
+  cursor: pointer;
+  border-radius: 4px;
+  line-height: 1;
+}
+
+.goto-btn:hover {
+  background: var(--accent-blue);
+  color: #000;
+  border-color: var(--accent-blue);
 }
 
 .input-unit {
