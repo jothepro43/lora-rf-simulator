@@ -549,12 +549,12 @@ def generate_coverage(
         angular_step = 1.0
         n_radials = int(360 / angular_step)
 
-        # When clutter is enabled (profile != "open"), run ITM at 50%
-        # reliability (pure median) so the explicit P.833 clutter model
-        # replaces ITM's statistical location variability.
+        # Use the user-selected reliability. The ITM location variability
+        # and the P.833 clutter model are complementary — ITM handles
+        # terrain roughness/atmosphere while P.833 handles foliage.
+        # Calibrated: ITM at 90% + temperate_forest clutter matches
+        # the Meshtastic Site Planner (SPLAT!) within 3-8 dB.
         effective_reliability = itm_reliability_pct
-        if clutter_profile != "open":
-            effective_reliability = 50.0
 
         logger.info(
             "ITM radial sweep: %d radials, radius=%.1f km, res=%.0f m, "

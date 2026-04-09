@@ -71,8 +71,11 @@ CLUTTER_PROFILES = {
 # Tuning constants for the distance-to-depth model.
 # d_max_base: maximum effective vegetation depth (m) for 15 m reference trees.
 # d_scale_base: distance constant (m) controlling how fast depth ramps.
-_D_MAX_BASE = 300.0
-_D_SCALE_BASE = 16000.0
+# Tuned to produce ~5dB at 5km, ~12dB at 10km, ~15dB at 15km+ for temperate_forest
+# with a 23m TX above 15m canopy at 915 MHz. These values were calibrated by
+# comparing ITM(90/90) + clutter against the Meshtastic Site Planner (SPLAT!/ITM).
+_D_MAX_BASE = 200.0
+_D_SCALE_BASE = 25000.0
 _TREE_REF_HEIGHT = 15.0
 
 
