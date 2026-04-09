@@ -17,6 +17,7 @@ from api.simulate import router as simulate_router
 from api.terrain import router as terrain_router
 from api.export import router as export_router
 from api.mqtt import router as mqtt_router
+from api.links import router as links_router
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -56,6 +57,7 @@ app.include_router(simulate_router)
 app.include_router(terrain_router)
 app.include_router(export_router)
 app.include_router(mqtt_router)
+app.include_router(links_router)
 
 
 CUSTOM_DEVICES_PATH = Path(__file__).parent / "data" / "custom_devices.json"

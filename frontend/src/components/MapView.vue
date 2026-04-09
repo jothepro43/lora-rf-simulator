@@ -16,6 +16,7 @@ let losSegmentsLayer: L.LayerGroup | null = null
 let losCursorMarker: L.CircleMarker | null = null
 let losInspectMarker: L.Marker | null = null
 let legendControl: L.Control | null = null
+let linksLayer: L.LayerGroup
 
 // Search state
 const searchQuery = ref('')
@@ -156,6 +157,7 @@ onMounted(() => {
 
   markersLayer = L.layerGroup().addTo(map)
   losMarkersLayer = L.layerGroup().addTo(map)
+  linksLayer = L.layerGroup().addTo(map)
   losSegmentsLayer = L.layerGroup().addTo(map)
 
   // Prevent map interaction on search box
@@ -216,8 +218,19 @@ function refreshMarkers() {
       </div>
     `)
     marker.on('click', () => {
+      // Link mode: click two nodes to create a link
+      if (store.activeMode === 'link' && node.id) {
+        if (!store.linkStartNodeId) {
+          store.linkStartNodeId = node.id
+        } else if (node.id !== store.linkStartNodeId) {
+          store.createLink(store.linkStartNodeId, node.id)
+          store.linkStartNodeId = null
+          store.activeMode = 'none'
+          drawNetworkLinks()
+        }
+        return
+      }
       store.selectedNodeId = node.id ?? null
-      // Load into editor
       Object.assign(store.currentNode, node)
     })
     marker.on('dragend', async (e: any) => {
@@ -234,6 +247,40 @@ function refreshMarkers() {
       }
     })
     marker.addTo(markersLayer)
+  }
+}
+
+function drawNetworkLinks() {
+  if (!linksLayer) return
+  linksLayer.clearLayers()
+  const statusColors: Record<string, string> = {
+    excellent: '#3fb950', good: '#88ff00', viable: '#d29922',
+    marginal: '#f0883e', blocked: '#f85149', unknown: '#8b949e',
+  }
+  for (const link of store.networkLinks) {
+    if (!link.node1_lat || !link.node2_lat) continue
+    const color = statusColors[link.status] || statusColors.unknown
+    const dash = (link.status === 'blocked' || link.status === 'unknown') ? '8, 6' : ''
+    const line = L.polyline(
+      [[link.node1_lat, link.node1_lon], [link.node2_lat, link.node2_lon]],
+      { color, weight: 2.5, opacity: 0.8, dashArray: dash }
+    ).addTo(linksLayer)
+    line.bindPopup(`<div style="color:#000;min-width:180px;">
+      <b>${link.node1_name} \u2194 ${link.node2_name}</b><br/>
+      <span style="color:${color};font-weight:600;">${(link.status || 'unknown').toUpperCase()}</span><br/>
+      Distance: ${link.distance_km || '?'} km<br/>
+      Path Loss: ${link.path_loss_db || '?'} dB<br/>
+      Margin: ${link.link_margin_db || '?'} dB<br/>
+      LoS: ${link.is_los ? 'Clear' : 'Obstructed'}
+    </div>`)
+    // Midpoint label
+    const midLat = (link.node1_lat + link.node2_lat) / 2
+    const midLon = (link.node1_lon + link.node2_lon) / 2
+    const label = link.status === 'unknown' ? '?' : `${link.distance_km || '?'}km ${link.link_margin_db > 0 ? link.link_margin_db + 'dB' : '\u274c'}`
+    L.tooltip({ permanent: true, direction: 'center', className: 'link-label' })
+      .setLatLng([midLat, midLon])
+      .setContent(`<span style="background:${color}22;color:${color};padding:1px 6px;border-radius:3px;font-size:10px;font-weight:600;border:1px solid ${color}44;">${label}</span>`)
+      .addTo(linksLayer)
   }
 }
 
@@ -554,6 +601,7 @@ watch(() => store.losInspectPoint, (point) => {
 
 // Watch nodes changes
 watch(() => store.nodes, () => refreshMarkers(), { deep: true })
+watch(() => store.networkLinks, () => drawNetworkLinks(), { deep: true })
 
 // Watch for pan requests from sidebar
 watch(() => store.panRequest, (req) => {
@@ -590,6 +638,13 @@ watch(() => store.panRequest, (req) => {
         title="Click two points for LoS profile"
       >
         LoS Profile
+      </button>
+      <button
+        :class="{ active: store.activeMode === 'link' }"
+        @click="() => { store.activeMode = store.activeMode === 'link' ? 'none' : 'link'; store.linkStartNodeId = null }"
+        title="Click two nodes to create a network link"
+      >
+        🔗 Link
       </button>
       <button
         v-if="store.coverageResult?.image_base64"
@@ -635,6 +690,12 @@ watch(() => store.panRequest, (req) => {
     </div>
     <div v-if="store.activeMode === 'los' && store.losPoints.length === 1" class="map-hint">
       Click RX point
+    </div>
+    <div v-if="store.activeMode === 'link' && !store.linkStartNodeId" class="map-hint">
+      Click first node to link
+    </div>
+    <div v-if="store.activeMode === 'link' && store.linkStartNodeId" class="map-hint">
+      Click second node to complete link
     </div>
 
     <!-- Loading overlay with cancel -->

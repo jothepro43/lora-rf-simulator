@@ -17,7 +17,8 @@ export const useStore = defineStore('main', () => {
   // UI state
   const panRequest = ref<{ lat: number; lon: number } | null>(null)
   const sidebarOpen = ref(true)
-  const activeMode = ref<'place' | 'los' | 'coverage' | 'none'>('none')
+  const activeMode = ref<'place' | 'los' | 'link' | 'coverage' | 'none'>('none')
+  const linkStartNodeId = ref<number | null>(null)
   const losPoints = ref<{ lat: number; lon: number }[]>([])
   const losResult = ref<LosResult | null>(null)
   const coverageResult = ref<CoverageResult | null>(null)
@@ -209,6 +210,39 @@ export const useStore = defineStore('main', () => {
     devices.value = await api.getDevices()
   }
 
+  // ---- Network Links ----
+  const networkLinks = ref<any[]>([])
+
+  async function loadLinks() {
+    try { networkLinks.value = await api.listLinks() } catch { networkLinks.value = [] }
+  }
+
+  async function createLink(node1Id: number, node2Id: number) {
+    await api.createLink({ node1_id: node1Id, node2_id: node2Id })
+    await loadLinks()
+  }
+
+  async function deleteLink(id: number) {
+    await api.deleteLink(id)
+    await loadLinks()
+  }
+
+  async function deleteAllLinks() {
+    await api.deleteAllLinks()
+    await loadLinks()
+  }
+
+  async function analyzeAllLinks() {
+    const results = await api.analyzeLinks()
+    await loadLinks()
+    return results
+  }
+
+  async function autoDiscoverLinks(maxDistKm: number = 50) {
+    await api.autoDiscoverLinks(maxDistKm)
+    await loadLinks()
+  }
+
   return {
     devices, antennas, cables, channels,
     nodes, selectedNodeId, selectedNode,
@@ -219,5 +253,7 @@ export const useStore = defineStore('main', () => {
     applyDevicePreset, applyAntennaPreset, applyChannelPreset,
     cancelCoverage, runNodeToNodeLos,
     addCustomDevice, updateCustomDevice, deleteCustomDevice,
+    networkLinks, linkStartNodeId, loadLinks, createLink, deleteLink,
+    deleteAllLinks, analyzeAllLinks, autoDiscoverLinks,
   }
 })

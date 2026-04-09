@@ -18,6 +18,7 @@ const sections = ref({
   precomputed: false,
   mqtt: false,
   nodes: true,
+  topology: false,
 })
 
 function toggleSection(key: keyof typeof sections.value) {
@@ -316,6 +317,18 @@ async function runNodeToNodeLos() {
 // Custom device modal
 const showDeviceModal = ref(false)
 const editingDevice = ref<string | null>(null)
+
+// Network topology
+const newLinkNode1 = ref<number | ''>('')
+const newLinkNode2 = ref<number | ''>('')
+
+async function addManualLink() {
+  if (newLinkNode1.value && newLinkNode2.value) {
+    await store.createLink(Number(newLinkNode1.value), Number(newLinkNode2.value))
+    newLinkNode1.value = ''
+    newLinkNode2.value = ''
+  }
+}
 const customDevice = ref({
   name: '',
   manufacturer: '',
@@ -945,6 +958,57 @@ function applyClutterProfile(key: string) {
         <div class="stats-row">
           <span class="stats-label">Compute Time</span>
           <span class="stats-value">{{ store.coverageResult.stats.elapsed_seconds }}s</span>
+        </div>
+      </div>
+
+      <!-- Network Topology Section -->
+      <div class="section">
+        <div class="section-header" @click="toggleSection('topology')">
+          <span class="section-icon">🕸️</span>
+          <span>Network Topology</span>
+          <span class="toggle">{{ sections.topology ? '▼' : '▶' }}</span>
+        </div>
+        <div v-if="sections.topology" class="section-content">
+          <div style="display:flex;gap:4px;margin-bottom:8px;flex-wrap:wrap;">
+            <button class="btn-small" style="background:var(--accent-blue);color:#000;" @click="store.autoDiscoverLinks(50)">Auto-Discover</button>
+            <button class="btn-small" style="background:var(--accent-green);color:#000;" @click="store.analyzeAllLinks()">Analyze All</button>
+            <button class="btn-small" style="background:var(--accent-red);color:#fff;" @click="store.deleteAllLinks()">Clear All</button>
+          </div>
+          <div style="display:flex;gap:4px;align-items:center;margin-bottom:8px;">
+            <select v-model="newLinkNode1" style="flex:1;">
+              <option value="">TX Node...</option>
+              <option v-for="n in store.nodes" :key="n.id" :value="n.id">{{ n.name }}</option>
+            </select>
+            <span style="color:var(--text-muted)">↔</span>
+            <select v-model="newLinkNode2" style="flex:1;">
+              <option value="">RX Node...</option>
+              <option v-for="n in store.nodes" :key="n.id" :value="n.id">{{ n.name }}</option>
+            </select>
+            <button class="btn-small" style="background:var(--accent-green);color:#000;" :disabled="!newLinkNode1||!newLinkNode2" @click="addManualLink">
+              +
+            </button>
+          </div>
+          <div style="max-height:200px;overflow-y:auto;">
+            <div v-for="link in store.networkLinks" :key="link.id" class="link-item" :class="link.status">
+              <div style="display:flex;justify-content:space-between;align-items:center;">
+                <span style="font-size:12px;font-weight:500;">{{ link.node1_name }} ↔ {{ link.node2_name }}</span>
+                <button style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:12px;" @click="store.deleteLink(link.id)">✕</button>
+              </div>
+              <div style="display:flex;gap:8px;font-size:11px;color:var(--text-secondary);margin-top:2px;">
+                <span>{{ link.distance_km || '?' }}km</span>
+                <span :style="{color: link.status==='blocked'?'var(--accent-red)':link.status==='unknown'?'var(--text-muted)':'var(--accent-green)'}">{{ (link.status||'unknown').toUpperCase() }}</span>
+                <span v-if="link.link_margin_db">{{ link.link_margin_db }}dB</span>
+              </div>
+            </div>
+            <div v-if="!store.networkLinks.length" style="font-size:12px;color:var(--text-muted);padding:8px;text-align:center;">
+              No links. Click "Auto-Discover" or use the 🔗 Link tool on the map.
+            </div>
+          </div>
+          <div v-if="store.networkLinks.length" style="display:flex;gap:12px;margin-top:8px;font-size:11px;">
+            <span style="color:var(--text-muted);">{{ store.networkLinks.length }} links</span>
+            <span style="color:var(--accent-green);">{{ store.networkLinks.filter((l:any)=>['excellent','good','viable'].includes(l.status)).length }} working</span>
+            <span style="color:var(--accent-red);">{{ store.networkLinks.filter((l:any)=>l.status==='blocked').length }} blocked</span>
+          </div>
         </div>
       </div>
 
@@ -1702,4 +1766,17 @@ function applyClutterProfile(key: string) {
     max-height: 0;
   }
 }
+.link-item {
+  padding: 6px 8px;
+  margin-bottom: 3px;
+  border-radius: 4px;
+  background: var(--bg-primary);
+  border-left: 3px solid var(--text-muted);
+}
+.link-item.excellent { border-left-color: #3fb950; }
+.link-item.good { border-left-color: #88ff00; }
+.link-item.viable { border-left-color: #d29922; }
+.link-item.marginal { border-left-color: #f0883e; }
+.link-item.blocked { border-left-color: #f85149; }
+.btn-small { padding: 4px 10px; font-size: 11px; border-radius: 3px; }
 </style>

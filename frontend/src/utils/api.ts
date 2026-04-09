@@ -79,4 +79,13 @@ export const api = {
   getMqttConfig: () => request<any>('/mqtt/config'),
   updateMqttConfig: (config: any) => request<any>('/mqtt/config', { method: 'POST', body: JSON.stringify(config) }),
   getMqttStatus: () => request<any>('/mqtt/status'),
+
+  // Network Links
+  listLinks: () => request<any[]>('/links'),
+  createLink: (data: any) => request<any>('/links', { method: 'POST', body: JSON.stringify(data) }),
+  deleteLink: (id: number) => request<any>(`/links/${id}`, { method: 'DELETE' }),
+  deleteAllLinks: () => request<any>('/links', { method: 'DELETE' }),
+  analyzeLinks: () => request<any[]>('/links/analyze', { method: 'POST' }),
+  autoDiscoverLinks: (maxDistKm: number = 50) =>
+    request<any>(`/links/auto-discover?max_distance_km=${maxDistKm}`, { method: 'POST' }),
 }

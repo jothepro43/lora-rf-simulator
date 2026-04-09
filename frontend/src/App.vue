@@ -10,6 +10,7 @@ const store = useStore()
 onMounted(async () => {
   await store.loadCatalogs()
   await store.loadNodes()
+  await store.loadLinks()
 })
 </script>
 

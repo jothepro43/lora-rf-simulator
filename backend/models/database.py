@@ -29,6 +29,7 @@ def init_db():
         if inspector.has_table("nodes"):
             existing_cols = {col['name'] for col in inspector.get_columns('nodes')}
             from models.node import Node
+            from models.link import NetworkLink
             expected_cols = {col.name for col in Node.__table__.columns}
             missing = expected_cols - existing_cols
             if missing:
