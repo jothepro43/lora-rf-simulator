@@ -29,6 +29,7 @@ from services.propagation import (
     elevation_angle,
     directional_gain_reduction,
 )
+from services.clutter import compute_clutter_loss
 
 logger = logging.getLogger(__name__)
 
@@ -120,6 +121,8 @@ def _compute_radial(
     antenna_azimuth_deg, antenna_tilt_deg,
     antenna_h_beamwidth, antenna_v_beamwidth,
     antenna_front_to_back_db,
+    clutter_profile="open", clutter_tree_height_m=None,
+    clutter_tree_density=None, tx_height_agl=10.0,
 ):
     """Compute path loss along one radial from TX using horizon tracking.
 
@@ -193,7 +196,15 @@ def _compute_radial(
         else:
             fspl = 0.0
 
-        total_path_loss = fspl + diffraction_loss
+        # Clutter / foliage loss (ITU-R P.833)
+        clutter_loss = compute_clutter_loss(
+            dist_km, tx_height_agl, rx_height_m,
+            profile=clutter_profile,
+            tree_height_m=clutter_tree_height_m,
+            tree_density=clutter_tree_density,
+        )
+
+        total_path_loss = fspl + diffraction_loss + clutter_loss
         rx_power = eirp_dbm - total_path_loss + rx_gain_dbi
 
         # Directional vertical component (varies per point)
@@ -227,6 +238,8 @@ def _compute_radial_itm(
     antenna_azimuth_deg, antenna_tilt_deg,
     antenna_h_beamwidth, antenna_v_beamwidth,
     antenna_front_to_back_db,
+    clutter_profile="open", clutter_tree_height_m=None,
+    clutter_tree_density=None,
 ):
     """Compute path loss along a radial using the full ITM model.
 
@@ -288,7 +301,15 @@ def _compute_radial_itm(
         itm.lrProp(d)
         path_loss = itm.aVar(z_time, z_loc, z_conf)
 
-        rx_power = eirp_dbm - path_loss + rx_gain_dbi
+        # Clutter / foliage loss (ITU-R P.833)
+        clutter_loss = compute_clutter_loss(
+            d / 1000.0, tx_height_agl, rx_height_m,
+            profile=clutter_profile,
+            tree_height_m=clutter_tree_height_m,
+            tree_density=clutter_tree_density,
+        )
+
+        rx_power = eirp_dbm - path_loss - clutter_loss + rx_gain_dbi
         rx_powers[i] = rx_power
 
     # Apply directional antenna reduction
@@ -452,6 +473,9 @@ def generate_coverage(
     itm_ground_eps: float = 15.0,
     itm_ground_sigma: float = 0.005,
     itm_polarization: int = 1,
+    clutter_profile: str = "temperate_forest",
+    clutter_tree_height_m: float | None = None,
+    clutter_tree_density: float | None = None,
 ) -> dict:
     """Generate coverage as a PNG image overlay.
 
@@ -464,6 +488,13 @@ def generate_coverage(
         itm_ground_eps: Ground dielectric constant
         itm_ground_sigma: Ground conductivity S/m
         itm_polarization: 0=horizontal, 1=vertical
+        clutter_profile: Clutter/foliage profile name
+        clutter_tree_height_m: Override tree height (m), None = use profile
+        clutter_tree_density: Override tree density (0-1), None = use profile
+
+    When clutter is enabled (profile != "open"), the ITM model runs at
+    50% reliability (pure median) so that the explicit clutter model from
+    ITU-R P.833 replaces the statistical variability for forested areas.
 
     Returns base64-encoded PNG, Leaflet-style bounds, and summary stats.
     """
@@ -518,9 +549,18 @@ def generate_coverage(
         angular_step = 1.0
         n_radials = int(360 / angular_step)
 
+        # When clutter is enabled (profile != "open"), run ITM at 50%
+        # reliability (pure median) so the explicit P.833 clutter model
+        # replaces ITM's statistical location variability.
+        effective_reliability = itm_reliability_pct
+        if clutter_profile != "open":
+            effective_reliability = 50.0
+
         logger.info(
-            "ITM radial sweep: %d radials, radius=%.1f km, res=%.0f m, reliability=%.0f%%",
-            n_radials, radius_km, resolution_m, itm_reliability_pct,
+            "ITM radial sweep: %d radials, radius=%.1f km, res=%.0f m, "
+            "reliability=%.0f%% (user=%.0f%%), clutter=%s",
+            n_radials, radius_km, resolution_m, effective_reliability,
+            itm_reliability_pct, clutter_profile,
         )
 
         all_lats = []
@@ -535,11 +575,14 @@ def generate_coverage(
                 radius_km, resolution_m, frequency_mhz,
                 itm_ground_eps, itm_ground_sigma, 301.0,
                 itm_radio_climate, itm_polarization,
-                itm_reliability_pct, itm_reliability_pct, itm_reliability_pct,
+                effective_reliability, effective_reliability, effective_reliability,
                 rx_height_m, eirp_dbm, rx_gain_dbi,
                 antenna_azimuth_deg, antenna_tilt_deg,
                 antenna_h_beamwidth, antenna_v_beamwidth,
                 antenna_front_to_back_db,
+                clutter_profile=clutter_profile,
+                clutter_tree_height_m=clutter_tree_height_m,
+                clutter_tree_density=clutter_tree_density,
             )
             if len(lats_r) > 0:
                 all_lats.append(lats_r)
@@ -640,8 +683,8 @@ def generate_coverage(
     n_steps = int(radius_km * 1000 / resolution_m)
 
     logger.info(
-        "Radial sweep: %d radials x %d steps = %d points, radius=%.1f km, res=%.0f m",
-        n_radials, n_steps, n_radials * n_steps, radius_km, resolution_m,
+        "Radial sweep: %d radials x %d steps = %d points, radius=%.1f km, res=%.0f m, clutter=%s",
+        n_radials, n_steps, n_radials * n_steps, radius_km, resolution_m, clutter_profile,
     )
     logger.info(
         "Antenna params: azimuth=%.1f, tilt=%.1f, h_beamwidth=%.1f, v_beamwidth=%.1f, f/b=%.1f dB, directional=%s",
@@ -669,6 +712,8 @@ def generate_coverage(
                 antenna_azimuth_deg, antenna_tilt_deg,
                 antenna_h_beamwidth, antenna_v_beamwidth,
                 antenna_front_to_back_db,
+                clutter_profile, clutter_tree_height_m,
+                clutter_tree_density, tx_height_m,
             )
             futures[fut] = i
 

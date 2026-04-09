@@ -63,6 +63,10 @@ export const useStore = defineStore('main', () => {
     itm_ground_eps: 15.0,
     itm_ground_sigma: 0.005,
     itm_polarization: 1,
+    // Clutter / foliage attenuation (ITU-R P.833)
+    clutter_profile: 'temperate_forest' as string,
+    clutter_tree_height_m: null as number | null,
+    clutter_tree_density: null as number | null,
   })
 
   // Display parameters

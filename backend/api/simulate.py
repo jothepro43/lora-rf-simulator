@@ -55,6 +55,10 @@ class CoverageRequest(BaseModel):
     itm_ground_eps: float = 15.0        # dielectric constant
     itm_ground_sigma: float = 0.005     # conductivity S/m
     itm_polarization: int = 1           # 0=horizontal, 1=vertical
+    # Clutter / foliage attenuation (ITU-R P.833)
+    clutter_profile: str = "temperate_forest"  # temperate_forest, dense_forest, suburban, urban, open
+    clutter_tree_height_m: float | None = None  # override profile default (m)
+    clutter_tree_density: float | None = None   # override profile default (0-1)
 
 
 class LinkBudgetRequest(BaseModel):
@@ -134,6 +138,9 @@ def simulate_coverage(req: CoverageRequest):
         itm_ground_eps=req.itm_ground_eps,
         itm_ground_sigma=req.itm_ground_sigma,
         itm_polarization=req.itm_polarization,
+        clutter_profile=req.clutter_profile,
+        clutter_tree_height_m=req.clutter_tree_height_m,
+        clutter_tree_density=req.clutter_tree_density,
     )
     # Strip internal numpy grid from response
     result.pop("_power_grid", None)
@@ -225,6 +232,9 @@ def simulate_multi_coverage(req: MultiCoverageRequest):
             itm_ground_eps=node_req.itm_ground_eps,
             itm_ground_sigma=node_req.itm_ground_sigma,
             itm_polarization=node_req.itm_polarization,
+            clutter_profile=node_req.clutter_profile,
+            clutter_tree_height_m=node_req.clutter_tree_height_m,
+            clutter_tree_density=node_req.clutter_tree_density,
         )
 
         # Use the raw power grid returned by generate_coverage
@@ -383,6 +393,9 @@ def precompute_coverage(req: PrecomputeRequest):
         itm_ground_eps=req.coverage.itm_ground_eps,
         itm_ground_sigma=req.coverage.itm_ground_sigma,
         itm_polarization=req.coverage.itm_polarization,
+        clutter_profile=req.coverage.clutter_profile,
+        clutter_tree_height_m=req.coverage.clutter_tree_height_m,
+        clutter_tree_density=req.coverage.clutter_tree_density,
     )
 
     # Strip internal numpy grid before caching

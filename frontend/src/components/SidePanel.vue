@@ -92,6 +92,9 @@ async function runCoverage() {
       itm_ground_eps: store.simParams.itm_ground_eps,
       itm_ground_sigma: store.simParams.itm_ground_sigma,
       itm_polarization: store.simParams.itm_polarization,
+      clutter_profile: store.simParams.clutter_profile,
+      clutter_tree_height_m: store.simParams.clutter_tree_height_m,
+      clutter_tree_density: store.simParams.clutter_tree_density,
     }, controller.signal)
   } catch (err: any) {
     if (err.name !== 'AbortError') {
@@ -145,6 +148,9 @@ async function runMultiCoverage() {
         itm_ground_eps: store.simParams.itm_ground_eps,
         itm_ground_sigma: store.simParams.itm_ground_sigma,
         itm_polarization: store.simParams.itm_polarization,
+        clutter_profile: store.simParams.clutter_profile,
+        clutter_tree_height_m: store.simParams.clutter_tree_height_m,
+        clutter_tree_density: store.simParams.clutter_tree_density,
       }
     })
     store.coverageResult = await api.simulateMultiCoverage(
@@ -362,6 +368,29 @@ const weatherOptions = [
   { label: 'Storm', rain: 50 },
   { label: 'Ice Storm', rain: 0 },
 ]
+
+// Clutter / foliage profiles (ITU-R P.833)
+const clutterProfiles = [
+  { key: 'temperate_forest', label: 'Temperate Forest', tree_height: 15, density: 0.7 },
+  { key: 'dense_forest', label: 'Dense Forest', tree_height: 20, density: 0.9 },
+  { key: 'suburban', label: 'Suburban', tree_height: 8, density: 0.3 },
+  { key: 'urban', label: 'Urban', tree_height: 0, density: 0 },
+  { key: 'open', label: 'Open / Clear', tree_height: 0, density: 0 },
+]
+
+const clutterOverride = ref(false)
+
+function applyClutterProfile(key: string) {
+  store.simParams.clutter_profile = key
+  const p = clutterProfiles.find(c => c.key === key)
+  if (p) {
+    // Reset overrides to null (use profile defaults) unless user has toggled custom
+    if (!clutterOverride.value) {
+      store.simParams.clutter_tree_height_m = null
+      store.simParams.clutter_tree_density = null
+    }
+  }
+}
 </script>
 
 <template>
@@ -689,6 +718,40 @@ const weatherOptions = [
               <option value="desert">Desert</option>
               <option value="maritime">Maritime</option>
             </select>
+          </div>
+          <div class="field-row">
+            <label>Clutter</label>
+            <select
+              :value="store.simParams.clutter_profile"
+              @change="(e) => applyClutterProfile((e.target as HTMLSelectElement).value)"
+            >
+              <option v-for="cp in clutterProfiles" :key="cp.key" :value="cp.key">{{ cp.label }}</option>
+            </select>
+          </div>
+          <template v-if="store.simParams.clutter_profile !== 'open' && store.simParams.clutter_profile !== 'urban'">
+            <div class="field-row">
+              <label>Custom Trees</label>
+              <input type="checkbox" v-model="clutterOverride" @change="() => { if (!clutterOverride) { store.simParams.clutter_tree_height_m = null; store.simParams.clutter_tree_density = null; } else { const p = clutterProfiles.find(c => c.key === store.simParams.clutter_profile); store.simParams.clutter_tree_height_m = p?.tree_height ?? 15; store.simParams.clutter_tree_density = p?.density ?? 0.7; } }" />
+            </div>
+            <template v-if="clutterOverride">
+              <div class="field-row">
+                <label>Tree Height</label>
+                <div class="input-unit">
+                  <input v-model.number="store.simParams.clutter_tree_height_m" type="number" min="0" max="40" step="1" />
+                  <span class="unit">m</span>
+                </div>
+              </div>
+              <div class="field-row">
+                <label>Tree Density</label>
+                <div class="input-unit">
+                  <input v-model.number="store.simParams.clutter_tree_density" type="number" min="0" max="1" step="0.05" />
+                  <span class="unit">0-1</span>
+                </div>
+              </div>
+            </template>
+          </template>
+          <div class="itm-note" v-if="store.simParams.clutter_profile !== 'open'">
+            ITU-R P.833 foliage model adds vegetation loss. ITM reliability forced to 50% (median) when clutter enabled.
           </div>
           <div class="field-row">
             <label>Weather</label>
