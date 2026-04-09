@@ -50,7 +50,7 @@ class CoverageRequest(BaseModel):
     antenna_front_to_back_db: float = 0.0
     model: str = "terrain"  # "terrain", "itm", or "fspl"
     # ITM (Longley-Rice) parameters
-    itm_reliability_pct: float = 50.0   # 50-99
+    itm_reliability_pct: float = 90.0   # 50-99 (90 matches SPLAT!/Site Planner defaults)
     itm_radio_climate: int = 5          # 1-7
     itm_ground_eps: float = 15.0        # dielectric constant
     itm_ground_sigma: float = 0.005     # conductivity S/m
