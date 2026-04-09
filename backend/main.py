@@ -114,6 +114,31 @@ def add_custom_device(device: dict):
     return {"key": key, "device": custom[key]}
 
 
+@app.put("/api/data/devices/custom/{key}")
+def update_custom_device(key: str, device: dict):
+    """Update an existing custom device."""
+    custom = _load_custom_devices()
+    if key not in custom:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail=f"Custom device '{key}' not found")
+    custom[key] = {
+        "name": device.get("name", custom[key].get("name", "Custom Device")),
+        "manufacturer": device.get("manufacturer", custom[key].get("manufacturer", "Custom")),
+        "radio": device.get("radio", custom[key].get("radio", "SX1262")),
+        "tx_power_dbm": device.get("tx_power_dbm", custom[key].get("tx_power_dbm", 22)),
+        "rx_sensitivity_dbm": device.get("rx_sensitivity_dbm", custom[key].get("rx_sensitivity_dbm", -148)),
+        "frequency_range": "863-928 MHz",
+        "connector": device.get("connector", custom[key].get("connector", "SMA")),
+        "power_consumption_tx_ma": 0,
+        "power_consumption_rx_ma": 0,
+        "protocols": ["LoRa"],
+        "notes": device.get("notes", custom[key].get("notes", "")),
+        "custom": True,
+    }
+    _save_custom_devices(custom)
+    return {"key": key, "device": custom[key]}
+
+
 @app.delete("/api/data/devices/custom/{key}")
 def delete_custom_device(key: str):
     """Remove a custom device."""

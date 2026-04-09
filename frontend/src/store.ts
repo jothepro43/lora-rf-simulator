@@ -188,6 +188,12 @@ export const useStore = defineStore('main', () => {
     return created
   }
 
+  async function updateCustomDevice(key: string, device: Record<string, any>) {
+    const updated = await api.updateCustomDevice(key, device)
+    devices.value = await api.getDevices()
+    return updated
+  }
+
   async function deleteCustomDevice(key: string) {
     await api.deleteCustomDevice(key)
     devices.value = await api.getDevices()
@@ -202,6 +208,6 @@ export const useStore = defineStore('main', () => {
     loadCatalogs, loadNodes, saveNode, deleteNode,
     applyDevicePreset, applyAntennaPreset, applyChannelPreset,
     cancelCoverage, runNodeToNodeLos,
-    addCustomDevice, deleteCustomDevice,
+    addCustomDevice, updateCustomDevice, deleteCustomDevice,
   }
 })

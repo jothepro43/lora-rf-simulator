@@ -315,6 +315,7 @@ async function runNodeToNodeLos() {
 
 // Custom device modal
 const showDeviceModal = ref(false)
+const editingDevice = ref<string | null>(null)
 const customDevice = ref({
   name: '',
   manufacturer: '',
@@ -325,10 +326,7 @@ const customDevice = ref({
   notes: '',
 })
 
-async function saveCustomDevice() {
-  if (!customDevice.value.name) return
-  await store.addCustomDevice(customDevice.value)
-  showDeviceModal.value = false
+function resetCustomDevice() {
   customDevice.value = {
     name: '',
     manufacturer: '',
@@ -338,6 +336,38 @@ async function saveCustomDevice() {
     connector: 'SMA',
     notes: '',
   }
+}
+
+function openEditDevice(key: string) {
+  const dev = store.devices[key]
+  if (!dev) return
+  editingDevice.value = key
+  customDevice.value = {
+    name: dev.name || '',
+    manufacturer: dev.manufacturer || '',
+    tx_power_dbm: dev.tx_power_dbm ?? 22,
+    rx_sensitivity_dbm: dev.rx_sensitivity_dbm ?? -148,
+    radio: dev.radio || 'SX1262',
+    connector: dev.connector || 'SMA',
+    notes: dev.notes || '',
+  }
+  showDeviceModal.value = true
+}
+
+function closeDeviceModal() {
+  showDeviceModal.value = false
+  editingDevice.value = null
+  resetCustomDevice()
+}
+
+async function saveCustomDevice() {
+  if (!customDevice.value.name) return
+  if (editingDevice.value) {
+    await store.updateCustomDevice(editingDevice.value, customDevice.value)
+  } else {
+    await store.addCustomDevice(customDevice.value)
+  }
+  closeDeviceModal()
 }
 
 // ITM ground type presets: { eps_dielect, sgm_conductivity }
@@ -449,6 +479,12 @@ function applyClutterProfile(key: string) {
                   {{ dev.name }}
                 </option>
               </select>
+              <button
+                v-if="store.currentNode.device_preset && store.devices[store.currentNode.device_preset]?.custom"
+                class="btn-add-inline"
+                @click="openEditDevice(store.currentNode.device_preset)"
+                title="Edit custom device"
+              >&#9998;</button>
               <button class="btn-add-inline" @click="showDeviceModal = true" title="Add custom device">+</button>
             </div>
           </div>
@@ -1034,11 +1070,11 @@ function applyClutterProfile(key: string) {
       </div>
 
       <!-- Custom Device Modal -->
-      <div v-if="showDeviceModal" class="modal-overlay" @click.self="showDeviceModal = false">
+      <div v-if="showDeviceModal" class="modal-overlay" @click.self="closeDeviceModal">
         <div class="modal">
           <div class="modal-header">
-            <h3>Add Custom Device</h3>
-            <button class="close-btn" @click="showDeviceModal = false">&#10005;</button>
+            <h3>{{ editingDevice ? `Edit Device: ${customDevice.name}` : 'Add Custom Device' }}</h3>
+            <button class="close-btn" @click="closeDeviceModal">&#10005;</button>
           </div>
           <div class="modal-body">
             <div class="field-row">
@@ -1081,8 +1117,8 @@ function applyClutterProfile(key: string) {
             </div>
           </div>
           <div class="modal-footer">
-            <button class="btn-cancel" @click="showDeviceModal = false">Cancel</button>
-            <button class="btn-save" @click="saveCustomDevice" :disabled="!customDevice.name">Save Device</button>
+            <button class="btn-cancel" @click="closeDeviceModal">Cancel</button>
+            <button class="btn-save" @click="saveCustomDevice" :disabled="!customDevice.name">{{ editingDevice ? 'Update Device' : 'Save Device' }}</button>
           </div>
         </div>
       </div>

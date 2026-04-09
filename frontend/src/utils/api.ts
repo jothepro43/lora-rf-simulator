@@ -40,6 +40,8 @@ export const api = {
   // Custom devices
   addCustomDevice: (device: any) =>
     request<any>('/data/devices/custom', { method: 'POST', body: JSON.stringify(device) }),
+  updateCustomDevice: (key: string, device: any) =>
+    request<any>(`/data/devices/custom/${encodeURIComponent(key)}`, { method: 'PUT', body: JSON.stringify(device) }),
   deleteCustomDevice: (key: string) =>
     request<any>(`/data/devices/custom/${encodeURIComponent(key)}`, { method: 'DELETE' }),
 
