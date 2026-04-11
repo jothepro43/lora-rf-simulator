@@ -1,4 +1,5 @@
 # LoRa RF Simulator
+<img width="3825" height="1965" alt="Screenshot 2026-04-10 213830" src="https://github.com/user-attachments/assets/864cbf23-085f-4082-aee7-952c08209467" />
 
 An open-source, self-hostable LoRa RF propagation simulator focused on **Meshtastic** and **MeshCore** devices. Combines real terrain data (NASA SRTM) with propagation modeling to predict RF coverage, line-of-sight paths, and link budgets.
 
