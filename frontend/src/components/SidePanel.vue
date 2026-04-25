@@ -1009,6 +1009,58 @@ function applyClutterProfile(key: string) {
             <span style="color:var(--accent-green);">{{ store.networkLinks.filter((l:any)=>['excellent','good','viable'].includes(l.status)).length }} working</span>
             <span style="color:var(--accent-red);">{{ store.networkLinks.filter((l:any)=>l.status==='blocked').length }} blocked</span>
           </div>
+
+          <!-- Multi-hop pathfinding -->
+          <div style="margin-top:12px;border-top:1px solid var(--border);padding-top:8px;">
+            <div style="font-size:12px;font-weight:600;margin-bottom:6px;">Multi-Hop Path</div>
+            <div style="display:flex;gap:4px;align-items:center;margin-bottom:6px;">
+              <select v-model="store.pathQuery.source_id" style="flex:1;">
+                <option :value="null">From...</option>
+                <option v-for="n in store.nodes" :key="'pf'+n.id" :value="n.id">{{ n.name }}</option>
+              </select>
+              <span style="color:var(--text-muted)">→</span>
+              <select v-model="store.pathQuery.dest_id" style="flex:1;">
+                <option :value="null">To...</option>
+                <option v-for="n in store.nodes" :key="'pt'+n.id" :value="n.id">{{ n.name }}</option>
+              </select>
+            </div>
+            <div style="display:flex;gap:4px;align-items:center;margin-bottom:6px;">
+              <select v-model="store.pathQuery.objective" style="flex:1;">
+                <option value="hops">Fewest hops</option>
+                <option value="lowest_total_loss">Lowest total path loss</option>
+                <option value="best_bottleneck_margin">Best bottleneck margin</option>
+              </select>
+              <label style="font-size:11px;color:var(--text-muted);display:flex;gap:4px;align-items:center;">
+                <input type="checkbox" v-model="store.pathQuery.allow_unanalyzed" /> incl. unknown
+              </label>
+            </div>
+            <div style="display:flex;gap:4px;">
+              <button class="btn-small" style="background:var(--accent-blue);color:#000;flex:1;"
+                :disabled="store.pathLoading || !store.pathQuery.source_id || !store.pathQuery.dest_id"
+                @click="store.findPath()">
+                {{ store.pathLoading ? 'Finding...' : 'Find Path' }}
+              </button>
+              <button class="btn-small" style="background:var(--bg-secondary);color:var(--text-primary);"
+                :disabled="!store.pathResult"
+                @click="store.clearPath()">Clear</button>
+            </div>
+            <div v-if="store.pathResult" style="margin-top:8px;font-size:11px;">
+              <div v-if="store.pathResult.found">
+                <div style="color:var(--accent-green);font-weight:600;">
+                  {{ store.pathResult.hops }}-hop path:
+                  {{ (store.pathResult.node_names || []).join(' → ') }}
+                </div>
+                <div style="display:flex;gap:10px;color:var(--text-secondary);margin-top:2px;flex-wrap:wrap;">
+                  <span>{{ store.pathResult.total_distance_km }} km</span>
+                  <span>{{ store.pathResult.total_path_loss_db }} dB loss</span>
+                  <span>worst margin: {{ store.pathResult.end_to_end_margin_db }} dB</span>
+                </div>
+              </div>
+              <div v-else style="color:var(--accent-red);">
+                {{ store.pathResult.reason || 'No path found.' }}
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 

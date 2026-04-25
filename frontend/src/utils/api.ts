@@ -85,7 +85,21 @@ export const api = {
   createLink: (data: any) => request<any>('/links', { method: 'POST', body: JSON.stringify(data) }),
   deleteLink: (id: number) => request<any>(`/links/${id}`, { method: 'DELETE' }),
   deleteAllLinks: () => request<any>('/links', { method: 'DELETE' }),
-  analyzeLinks: () => request<any[]>('/links/analyze', { method: 'POST' }),
+  analyzeLinks: (options?: any) =>
+    request<{ links: any[]; data_quality: { missing_srtm_tiles: string[]; low_confidence: boolean } }>(
+      '/links/analyze',
+      { method: 'POST', body: options ? JSON.stringify(options) : undefined },
+    ),
   autoDiscoverLinks: (maxDistKm: number = 50) =>
     request<any>(`/links/auto-discover?max_distance_km=${maxDistKm}`, { method: 'POST' }),
+  findPath: (req: {
+    source_id: number
+    dest_id: number
+    objective?: 'hops' | 'lowest_total_loss' | 'best_bottleneck_margin'
+    max_hops?: number
+    min_margin_db?: number
+    allow_unanalyzed?: boolean
+    allowed_relay_roles?: string[]
+  }) =>
+    request<any>('/links/path', { method: 'POST', body: JSON.stringify(req) }),
 }

@@ -1,23 +1,46 @@
-"""Network link CRUD + analysis endpoints."""
+"""Network link CRUD + analysis + multi-hop pathfinding endpoints."""
 
 import math
 import logging
+from typing import Literal, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from models.database import get_db
 from models.link import NetworkLink
 from models.node import Node
+from services.routing import EdgeView, NodeView, find_path
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/links", tags=["links"])
+
+
+# Match SUPPORTED_PATH_LOSS_MODELS in services.propagation
+PathLossModel = Literal["fspl", "fspl_diffraction", "fspl_weather", "full"]
+ClutterProfile = Literal[
+    "open", "suburban", "urban", "temperate_forest", "dense_forest"
+]
+PathObjective = Literal["hops", "lowest_total_loss", "best_bottleneck_margin"]
 
 
 class LinkCreate(BaseModel):
     node1_id: int
     node2_id: int
     notes: str = ""
+
+
+class AnalyzeOptions(BaseModel):
+    """Optional knobs for /analyze. All fields have sensible defaults."""
+
+    model: PathLossModel = "full"
+    clutter_profile: ClutterProfile = "open"
+    clutter_tree_height_m: Optional[float] = Field(default=None, ge=0)
+    clutter_tree_density: Optional[float] = Field(default=None, ge=0, le=1)
+    rain_rate_mmh: float = Field(default=0.0, ge=0)
+    wet_foliage: bool = False
+    ice: bool = False
+    num_profile_points: int = Field(default=200, ge=10, le=2000)
 
 
 @router.get("")
@@ -71,9 +94,35 @@ def clear_all_links(db: Session = Depends(get_db)):
     return {"deleted": count}
 
 
+def _classify_margin(margin: float) -> str:
+    if margin > 30:
+        return "excellent"
+    if margin > 20:
+        return "good"
+    if margin > 10:
+        return "viable"
+    if margin > 0:
+        return "marginal"
+    return "blocked"
+
+
 @router.post("/analyze")
-def analyze_all_links(db: Session = Depends(get_db)):
+def analyze_all_links(
+    options: Optional[AnalyzeOptions] = None,
+    db: Session = Depends(get_db),
+):
+    """Run LoS + path-loss analysis for every link.
+
+    Body is optional; defaults yield FSPL + diffraction + weather (no
+    clutter). Pass ``clutter_profile`` etc. to align with coverage-map
+    assumptions.
+    """
     from services.los_profile import compute_los_profile
+    from services.propagation import compute_path_loss
+    from services.terrain import reset_missing_tiles, get_missing_tiles
+
+    opts = options or AnalyzeOptions()
+    reset_missing_tiles()
 
     links = db.query(NetworkLink).all()
     results = []
@@ -84,24 +133,31 @@ def analyze_all_links(db: Session = Depends(get_db)):
             continue
         try:
             profile = compute_los_profile(
-                tx_lat=n1.lat, tx_lon=n1.lon, tx_height_m=n1.height_agl,
-                rx_lat=n2.lat, rx_lon=n2.lon, rx_height_m=n2.height_agl,
-                frequency_mhz=n1.frequency_mhz, num_points=200,
+                lat1=n1.lat, lon1=n1.lon, tx_height_m=n1.height_agl,
+                lat2=n2.lat, lon2=n2.lon, rx_height_m=n2.height_agl,
+                frequency_mhz=n1.frequency_mhz,
+                num_points=opts.num_profile_points,
             )
-            path_loss = profile.get("path_loss", {}).get("total_path_loss_db", 0)
-            received = n1.tx_power_dbm + n1.antenna_gain_dbi + n2.antenna_gain_dbi - path_loss
+            path_loss_result = compute_path_loss(
+                profile["distances"],
+                profile["elevations"],
+                n1.height_agl,
+                n2.height_agl,
+                n1.frequency_mhz,
+                model=opts.model,
+                rain_rate_mmh=opts.rain_rate_mmh,
+                wet_foliage=opts.wet_foliage,
+                ice=opts.ice,
+                clutter_profile=opts.clutter_profile,
+                clutter_tree_height_m=opts.clutter_tree_height_m,
+                clutter_tree_density=opts.clutter_tree_density,
+            )
+            path_loss = path_loss_result.get("total_path_loss_db", 0)
+            received = (
+                n1.tx_power_dbm + n1.antenna_gain_dbi + n2.antenna_gain_dbi - path_loss
+            )
             margin = received - n2.rx_sensitivity_dbm
-
-            if margin > 30:
-                status = "excellent"
-            elif margin > 20:
-                status = "good"
-            elif margin > 10:
-                status = "viable"
-            elif margin > 0:
-                status = "marginal"
-            else:
-                status = "blocked"
+            status = _classify_margin(margin)
 
             link.distance_km = round(profile.get("total_distance_m", 0) / 1000, 2)
             link.path_loss_db = round(path_loss, 1)
@@ -112,6 +168,7 @@ def analyze_all_links(db: Session = Depends(get_db)):
         except Exception as e:
             logger.error("Failed to analyze link %d: %s", link.id, e)
             link.status = "unknown"
+            path_loss_result = None
 
         results.append({
             "link_id": link.id,
@@ -120,10 +177,19 @@ def analyze_all_links(db: Session = Depends(get_db)):
             "margin_db": link.link_margin_db,
             "status": link.status,
             "is_los": link.is_los,
+            "breakdown": path_loss_result,
         })
 
     db.commit()
-    return results
+
+    missing = get_missing_tiles()
+    return {
+        "links": results,
+        "data_quality": {
+            "missing_srtm_tiles": missing,
+            "low_confidence": bool(missing),
+        },
+    }
 
 
 @router.post("/auto-discover")
@@ -149,3 +215,96 @@ def auto_discover_links(
                     created += 1
     db.commit()
     return {"created": created, "total_nodes": len(nodes)}
+
+
+# ---------------------------------------------------------------------------
+# Multi-hop pathfinding
+# ---------------------------------------------------------------------------
+
+
+class PathRequest(BaseModel):
+    source_id: int
+    dest_id: int
+    objective: PathObjective = "hops"
+    max_hops: Optional[int] = Field(default=None, ge=1, le=32)
+    min_margin_db: Optional[float] = None
+    allow_unanalyzed: bool = False
+    allowed_relay_roles: Optional[list[str]] = None
+
+
+def _node_views(db: Session) -> list[NodeView]:
+    return [
+        NodeView(id=n.id, name=n.name, role=n.role or "")
+        for n in db.query(Node).all()
+    ]
+
+
+def _edge_views(db: Session) -> list[EdgeView]:
+    return [
+        EdgeView(
+            link_id=l.id,
+            node_a=l.node1_id,
+            node_b=l.node2_id,
+            distance_km=l.distance_km or 0.0,
+            path_loss_db=l.path_loss_db or 0.0,
+            link_margin_db=l.link_margin_db or 0.0,
+            status=l.status or "unknown",
+            is_los=bool(l.is_los),
+        )
+        for l in db.query(NetworkLink).all()
+    ]
+
+
+@router.post("/path")
+def solve_path(req: PathRequest, db: Session = Depends(get_db)):
+    """Find the best multi-hop path from ``source_id`` to ``dest_id``.
+
+    Run ``/api/links/analyze`` first so margins/path-loss are populated.
+    """
+    if req.source_id == req.dest_id:
+        raise HTTPException(400, "source_id and dest_id must differ")
+
+    nodes = _node_views(db)
+    edges = _edge_views(db)
+
+    try:
+        solution = find_path(
+            nodes=nodes,
+            edges=edges,
+            source_id=req.source_id,
+            dest_id=req.dest_id,
+            objective=req.objective,
+            max_hops=req.max_hops,
+            min_margin_db=req.min_margin_db,
+            allow_unanalyzed=req.allow_unanalyzed,
+            allowed_relay_roles=req.allowed_relay_roles,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+
+    if solution is None:
+        return {
+            "found": False,
+            "objective": req.objective,
+            "reason": (
+                "No usable path found. Run /analyze first or pass "
+                "allow_unanalyzed=true to include blocked/unknown edges."
+            ),
+        }
+
+    node_lookup = {n.id: n for n in db.query(Node).all()}
+    return {
+        "found": True,
+        "objective": solution.objective,
+        "hops": solution.hops,
+        "total_path_loss_db": solution.total_path_loss_db,
+        "total_distance_km": solution.total_distance_km,
+        "end_to_end_margin_db": solution.end_to_end_margin_db,
+        "bottleneck_link_id": solution.bottleneck_link_id,
+        "node_ids": solution.nodes,
+        "link_ids": solution.links,
+        "node_names": [
+            node_lookup[nid].name if nid in node_lookup else f"#{nid}"
+            for nid in solution.nodes
+        ],
+    }

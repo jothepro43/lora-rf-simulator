@@ -37,6 +37,21 @@ SRTM_BASE_URLS = [
 _tile_cache: dict[str, np.ndarray] = {}  # tile_name -> elevation array
 _elevation_cache: dict[tuple[float, float], float] = {}  # (lat, lon) -> elevation
 
+# Tracks tile names we have already failed to load so callers can flag
+# low-confidence RF results (sea-level fallback) without re-trying every
+# request.
+_missing_tiles: set[str] = set()
+
+
+def reset_missing_tiles() -> None:
+    """Clear the missing-tile flag (used at the start of an analysis run)."""
+    _missing_tiles.clear()
+
+
+def get_missing_tiles() -> list[str]:
+    """Return a snapshot of tile names that failed to load this run."""
+    return sorted(_missing_tiles)
+
 
 def _tile_name(lat: float, lon: float) -> str:
     """Get SRTM tile name for a lat/lon coordinate.
@@ -108,6 +123,7 @@ def _load_tile(tile_name: str) -> np.ndarray | None:
         return _tile_cache[tile_name]
 
     if not _download_tile(tile_name):
+        _missing_tiles.add(tile_name)
         return None
 
     hgt_file = _hgt_path(tile_name)

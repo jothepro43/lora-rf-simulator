@@ -9,6 +9,8 @@ export interface DevicePreset {
   power_consumption_tx_ma: number
   power_consumption_rx_ma: number
   protocols: string[]
+  notes?: string
+  custom?: boolean
 }
 
 export interface AntennaPreset {

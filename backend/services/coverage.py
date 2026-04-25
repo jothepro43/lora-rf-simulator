@@ -28,6 +28,7 @@ from services.propagation import (
     bearing_from_coords,
     elevation_angle,
     directional_gain_reduction,
+    weather_fade,
 )
 from services.clutter import compute_clutter_loss
 
@@ -123,6 +124,7 @@ def _compute_radial(
     antenna_front_to_back_db,
     clutter_profile="open", clutter_tree_height_m=None,
     clutter_tree_density=None, tx_height_agl=10.0,
+    rain_rate_mmh: float = 0.0,
 ):
     """Compute path loss along one radial from TX using horizon tracking.
 
@@ -204,7 +206,14 @@ def _compute_radial(
             tree_density=clutter_tree_density,
         )
 
-        total_path_loss = fspl + diffraction_loss + clutter_loss
+        # Weather attenuation (ITU-R P.838 rain at 915 MHz is small but
+        # may matter at very heavy rates over long radials).
+        if rain_rate_mmh > 0:
+            weather_loss = weather_fade(dist_km, frequency_mhz, rain_rate_mmh)
+        else:
+            weather_loss = 0.0
+
+        total_path_loss = fspl + diffraction_loss + clutter_loss + weather_loss
         rx_power = eirp_dbm - total_path_loss + rx_gain_dbi
 
         # Directional vertical component (varies per point)
@@ -457,7 +466,6 @@ def generate_coverage(
     rx_height_m: float = 1.5,
     k_factor: float = 4.0 / 3.0,
     rain_rate_mmh: float = 0.0,
-    num_profile_points: int = 50,
     min_dbm: float = -130.0,
     max_dbm: float = -80.0,
     colormap: str = "plasma",
@@ -492,9 +500,10 @@ def generate_coverage(
         clutter_tree_height_m: Override tree height (m), None = use profile
         clutter_tree_density: Override tree density (0-1), None = use profile
 
-    When clutter is enabled (profile != "open"), the ITM model runs at
-    50% reliability (pure median) so that the explicit clutter model from
-    ITU-R P.833 replaces the statistical variability for forested areas.
+    The ITM location variability and the P.833 clutter model are
+    complementary — ITM handles terrain roughness/atmosphere while P.833
+    handles foliage. Calibration: ITM at 90% + ``temperate_forest``
+    clutter matches the Meshtastic Site Planner (SPLAT!) within 3-8 dB.
 
     Returns base64-encoded PNG, Leaflet-style bounds, and summary stats.
     """
@@ -714,6 +723,7 @@ def generate_coverage(
                 antenna_front_to_back_db,
                 clutter_profile, clutter_tree_height_m,
                 clutter_tree_density, tx_height_m,
+                rain_rate_mmh,
             )
             futures[fut] = i
 

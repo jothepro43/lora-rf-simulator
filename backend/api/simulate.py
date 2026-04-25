@@ -4,10 +4,16 @@ import time
 import hashlib
 import json
 from fastapi import APIRouter
-from pydantic import BaseModel
-from typing import Optional
+from pydantic import BaseModel, Field
+from typing import Literal, Optional
 
 router = APIRouter(prefix="/api/simulate", tags=["simulate"])
+
+# Keep these in sync with services/coverage.py and services/clutter.py
+CoverageModel = Literal["terrain", "itm", "fspl"]
+ClutterProfile = Literal[
+    "open", "suburban", "urban", "temperate_forest", "dense_forest"
+]
 
 # In-memory cache for pre-computed coverage results
 _precompute_cache: dict[str, dict] = {}
@@ -26,39 +32,39 @@ class LosRequest(BaseModel):
 
 
 class CoverageRequest(BaseModel):
-    tx_lat: float
-    tx_lon: float
-    tx_height_m: float = 10.0
-    tx_power_dbm: float = 22.0
-    tx_gain_dbi: float = 2.0
-    cable_loss_db: float = 0.0
-    rx_gain_dbi: float = 2.0
-    rx_sensitivity_dbm: float = -148.0
-    frequency_mhz: float = 915.0
-    radius_km: float = 5.0
-    resolution_m: float = 180.0
-    rx_height_m: float = 1.5
-    k_factor: float = 1.333
-    rain_rate_mmh: float = 0.0
-    min_dbm: float = -130.0
-    max_dbm: float = -80.0
+    tx_lat: float = Field(..., ge=-90, le=90)
+    tx_lon: float = Field(..., ge=-180, le=180)
+    tx_height_m: float = Field(default=10.0, ge=0, le=1000)
+    tx_power_dbm: float = Field(default=22.0, ge=-30, le=60)
+    tx_gain_dbi: float = Field(default=2.0, ge=-10, le=40)
+    cable_loss_db: float = Field(default=0.0, ge=0, le=30)
+    rx_gain_dbi: float = Field(default=2.0, ge=-10, le=40)
+    rx_sensitivity_dbm: float = Field(default=-148.0, ge=-160, le=-50)
+    frequency_mhz: float = Field(default=915.0, gt=0)
+    radius_km: float = Field(default=5.0, gt=0, le=200)
+    resolution_m: float = Field(default=180.0, ge=10, le=2000)
+    rx_height_m: float = Field(default=1.5, ge=0, le=1000)
+    k_factor: float = Field(default=1.333, gt=0)
+    rain_rate_mmh: float = Field(default=0.0, ge=0, le=300)
+    min_dbm: float = Field(default=-130.0, ge=-200, le=0)
+    max_dbm: float = Field(default=-80.0, ge=-200, le=0)
     colormap: str = "plasma"
-    antenna_azimuth_deg: float = 0.0
-    antenna_tilt_deg: float = 0.0
-    antenna_h_beamwidth: float = 360.0
-    antenna_v_beamwidth: float = 90.0
-    antenna_front_to_back_db: float = 0.0
-    model: str = "terrain"  # "terrain", "itm", or "fspl"
+    antenna_azimuth_deg: float = Field(default=0.0, ge=0, lt=360)
+    antenna_tilt_deg: float = Field(default=0.0, ge=-90, le=90)
+    antenna_h_beamwidth: float = Field(default=360.0, gt=0, le=360)
+    antenna_v_beamwidth: float = Field(default=90.0, gt=0, le=180)
+    antenna_front_to_back_db: float = Field(default=0.0, ge=0, le=60)
+    model: CoverageModel = "terrain"
     # ITM (Longley-Rice) parameters
-    itm_reliability_pct: float = 90.0   # 50-99 (90 matches SPLAT!/Site Planner defaults)
-    itm_radio_climate: int = 5          # 1-7
-    itm_ground_eps: float = 15.0        # dielectric constant
-    itm_ground_sigma: float = 0.005     # conductivity S/m
-    itm_polarization: int = 1           # 0=horizontal, 1=vertical
+    itm_reliability_pct: float = Field(default=90.0, ge=50, le=99)
+    itm_radio_climate: int = Field(default=5, ge=1, le=7)
+    itm_ground_eps: float = Field(default=15.0, ge=1.0)
+    itm_ground_sigma: float = Field(default=0.005, ge=0.0)
+    itm_polarization: int = Field(default=1, ge=0, le=1)
     # Clutter / foliage attenuation (ITU-R P.833)
-    clutter_profile: str = "temperate_forest"  # temperate_forest, dense_forest, suburban, urban, open
-    clutter_tree_height_m: float | None = None  # override profile default (m)
-    clutter_tree_density: float | None = None   # override profile default (0-1)
+    clutter_profile: ClutterProfile = "temperate_forest"
+    clutter_tree_height_m: Optional[float] = Field(default=None, ge=0, le=80)
+    clutter_tree_density: Optional[float] = Field(default=None, ge=0, le=1)
 
 
 class LinkBudgetRequest(BaseModel):

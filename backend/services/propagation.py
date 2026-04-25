@@ -312,6 +312,15 @@ def directional_gain_reduction(
     return h_reduction + v_reduction
 
 
+# Supported models for compute_path_loss. Keep in sync with API enum.
+SUPPORTED_PATH_LOSS_MODELS = (
+    "fspl",                # FSPL only
+    "fspl_diffraction",    # FSPL + Deygout terrain diffraction
+    "fspl_weather",        # FSPL + weather (rain/foliage/ice)
+    "full",                # FSPL + diffraction + weather (+ optional clutter)
+)
+
+
 def compute_path_loss(
     distances: list[float],
     elevations: list[float],
@@ -319,37 +328,83 @@ def compute_path_loss(
     rx_height_m: float,
     frequency_mhz: float = 915.0,
     k_factor: float = DEFAULT_K_FACTOR,
-    model: str = "fspl_diffraction",
+    model: str = "full",
     rain_rate_mmh: float = 0.0,
     wet_foliage: bool = False,
     ice: bool = False,
+    clutter_profile: str | None = None,
+    clutter_tree_height_m: float | None = None,
+    clutter_tree_density: float | None = None,
 ) -> dict:
-    """Compute total path loss using selected model.
+    """Compute total path loss with selectable components.
 
-    Returns dict with breakdown of loss components.
+    The ``model`` argument controls which loss components are summed:
+        - ``"fspl"``             FSPL only (sanity baseline)
+        - ``"fspl_diffraction"`` FSPL + Deygout terrain diffraction
+        - ``"fspl_weather"``     FSPL + weather attenuation
+        - ``"full"``             FSPL + diffraction + weather (default)
+
+    When ``clutter_profile`` is provided (and not ``"open"``) and the model
+    selected is anything other than ``"fspl"``, an additional ITU-R P.833
+    clutter loss term is applied so point-to-point analysis stays
+    consistent with the coverage map's obstacle assumptions.
+
+    Returns dict with a per-component breakdown of loss in dB.
     """
+    if model not in SUPPORTED_PATH_LOSS_MODELS:
+        raise ValueError(
+            f"Unknown path-loss model '{model}'. Supported: {SUPPORTED_PATH_LOSS_MODELS}"
+        )
+
     total_distance = distances[-1] if distances else 0.0
 
-    # Free space path loss
     fspl_loss = fspl(total_distance, frequency_mhz)
 
-    # Diffraction loss (Deygout 94)
-    diff_loss = deygout_diffraction_loss(
-        distances, elevations, tx_height_m, rx_height_m, frequency_mhz, k_factor
-    )
+    diff_loss = 0.0
+    if model in ("fspl_diffraction", "full"):
+        diff_loss = deygout_diffraction_loss(
+            distances, elevations, tx_height_m, rx_height_m, frequency_mhz, k_factor
+        )
 
-    # Weather
-    weather_loss = weather_fade(
-        total_distance / 1000.0, frequency_mhz, rain_rate_mmh, wet_foliage, ice
-    )
+    weather_loss = 0.0
+    if model in ("fspl_weather", "full"):
+        weather_loss = weather_fade(
+            total_distance / 1000.0,
+            frequency_mhz,
+            rain_rate_mmh,
+            wet_foliage,
+            ice,
+        )
 
-    total_loss = fspl_loss + diff_loss + weather_loss
+    clutter_loss = 0.0
+    use_clutter = (
+        clutter_profile is not None
+        and clutter_profile not in ("open",)
+        and model != "fspl"
+    )
+    if use_clutter:
+        # Local import avoids a hard dependency cycle if clutter wants to
+        # reach back into propagation primitives in the future.
+        from services.clutter import compute_clutter_loss
+
+        clutter_loss = compute_clutter_loss(
+            distance_km=total_distance / 1000.0,
+            tx_height_m=tx_height_m,
+            rx_height_m=rx_height_m,
+            profile=clutter_profile,
+            tree_height_m=clutter_tree_height_m,
+            tree_density=clutter_tree_density,
+        )
+
+    total_loss = fspl_loss + diff_loss + weather_loss + clutter_loss
 
     return {
         "total_path_loss_db": round(total_loss, 2),
         "fspl_db": round(fspl_loss, 2),
         "diffraction_db": round(diff_loss, 2),
         "weather_db": round(weather_loss, 2),
+        "clutter_db": round(clutter_loss, 2),
         "distance_m": round(total_distance, 1),
         "model": model,
+        "clutter_profile": clutter_profile if use_clutter else "open",
     }

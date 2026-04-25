@@ -17,6 +17,7 @@ let losCursorMarker: L.CircleMarker | null = null
 let losInspectMarker: L.Marker | null = null
 let legendControl: L.Control | null = null
 let linksLayer: L.LayerGroup
+let pathLayer: L.LayerGroup
 
 // Search state
 const searchQuery = ref('')
@@ -158,6 +159,7 @@ onMounted(() => {
   markersLayer = L.layerGroup().addTo(map)
   losMarkersLayer = L.layerGroup().addTo(map)
   linksLayer = L.layerGroup().addTo(map)
+  pathLayer = L.layerGroup().addTo(map)
   losSegmentsLayer = L.layerGroup().addTo(map)
 
   // Prevent map interaction on search box
@@ -257,13 +259,20 @@ function drawNetworkLinks() {
     excellent: '#3fb950', good: '#88ff00', viable: '#d29922',
     marginal: '#f0883e', blocked: '#f85149', unknown: '#8b949e',
   }
+  const pathLinkIds: Set<number> = new Set(
+    (store.pathResult?.found && Array.isArray(store.pathResult.link_ids))
+      ? store.pathResult.link_ids
+      : []
+  )
   for (const link of store.networkLinks) {
     if (!link.node1_lat || !link.node2_lat) continue
     const color = statusColors[link.status] || statusColors.unknown
     const dash = (link.status === 'blocked' || link.status === 'unknown') ? '8, 6' : ''
+    // Dim non-path links when a path is highlighted.
+    const dim = pathLinkIds.size > 0 && !pathLinkIds.has(link.id)
     const line = L.polyline(
       [[link.node1_lat, link.node1_lon], [link.node2_lat, link.node2_lon]],
-      { color, weight: 2.5, opacity: 0.8, dashArray: dash }
+      { color, weight: dim ? 1.5 : 2.5, opacity: dim ? 0.25 : 0.8, dashArray: dash }
     ).addTo(linksLayer)
     line.bindPopup(`<div style="color:#000;min-width:180px;">
       <b>${link.node1_name} \u2194 ${link.node2_name}</b><br/>
@@ -279,8 +288,33 @@ function drawNetworkLinks() {
     const label = link.status === 'unknown' ? '?' : `${link.distance_km || '?'}km ${link.link_margin_db > 0 ? link.link_margin_db + 'dB' : '\u274c'}`
     L.tooltip({ permanent: true, direction: 'center', className: 'link-label' })
       .setLatLng([midLat, midLon])
-      .setContent(`<span style="background:${color}22;color:${color};padding:1px 6px;border-radius:3px;font-size:10px;font-weight:600;border:1px solid ${color}44;">${label}</span>`)
+      .setContent(`<span style="background:${color}22;color:${color};padding:1px 6px;border-radius:3px;font-size:10px;font-weight:600;border:1px solid ${color}44;opacity:${dim ? 0.4 : 1};">${label}</span>`)
       .addTo(linksLayer)
+  }
+}
+
+function drawPathHighlight() {
+  if (!pathLayer) return
+  pathLayer.clearLayers()
+  const result = store.pathResult
+  if (!result || !result.found || !Array.isArray(result.link_ids)) return
+
+  const bottleneck = result.bottleneck_link_id
+  const linksById: Record<number, any> = {}
+  for (const link of store.networkLinks) linksById[link.id] = link
+
+  for (const linkId of result.link_ids) {
+    const link = linksById[linkId]
+    if (!link || !link.node1_lat || !link.node2_lat) continue
+    const isBottleneck = linkId === bottleneck
+    L.polyline(
+      [[link.node1_lat, link.node1_lon], [link.node2_lat, link.node2_lon]],
+      {
+        color: isBottleneck ? '#ff8c1a' : '#00d4ff',
+        weight: 6,
+        opacity: 0.85,
+      },
+    ).addTo(pathLayer)
   }
 }
 
@@ -601,7 +635,14 @@ watch(() => store.losInspectPoint, (point) => {
 
 // Watch nodes changes
 watch(() => store.nodes, () => refreshMarkers(), { deep: true })
-watch(() => store.networkLinks, () => drawNetworkLinks(), { deep: true })
+watch(() => store.networkLinks, () => {
+  drawNetworkLinks()
+  drawPathHighlight()
+}, { deep: true })
+watch(() => store.pathResult, () => {
+  drawNetworkLinks()
+  drawPathHighlight()
+}, { deep: true })
 
 // Watch for pan requests from sidebar
 watch(() => store.panRequest, (req) => {

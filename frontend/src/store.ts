@@ -213,6 +213,26 @@ export const useStore = defineStore('main', () => {
   // ---- Network Links ----
   const networkLinks = ref<any[]>([])
 
+  // ---- Routing / multi-hop path ----
+  type PathObjective = 'hops' | 'lowest_total_loss' | 'best_bottleneck_margin'
+  const pathQuery = ref<{
+    source_id: number | null
+    dest_id: number | null
+    objective: PathObjective
+    max_hops: number | null
+    min_margin_db: number | null
+    allow_unanalyzed: boolean
+  }>({
+    source_id: null,
+    dest_id: null,
+    objective: 'hops',
+    max_hops: null,
+    min_margin_db: null,
+    allow_unanalyzed: false,
+  })
+  const pathResult = ref<any | null>(null)
+  const pathLoading = ref(false)
+
   async function loadLinks() {
     try { networkLinks.value = await api.listLinks() } catch { networkLinks.value = [] }
   }
@@ -243,6 +263,36 @@ export const useStore = defineStore('main', () => {
     await loadLinks()
   }
 
+  async function findPath() {
+    if (pathQuery.value.source_id == null || pathQuery.value.dest_id == null) {
+      pathResult.value = { found: false, reason: 'Pick source and destination nodes.' }
+      return
+    }
+    if (pathQuery.value.source_id === pathQuery.value.dest_id) {
+      pathResult.value = { found: false, reason: 'Source and destination must differ.' }
+      return
+    }
+    pathLoading.value = true
+    try {
+      pathResult.value = await api.findPath({
+        source_id: pathQuery.value.source_id,
+        dest_id: pathQuery.value.dest_id,
+        objective: pathQuery.value.objective,
+        max_hops: pathQuery.value.max_hops ?? undefined,
+        min_margin_db: pathQuery.value.min_margin_db ?? undefined,
+        allow_unanalyzed: pathQuery.value.allow_unanalyzed,
+      })
+    } catch (err: any) {
+      pathResult.value = { found: false, reason: err?.message || String(err) }
+    } finally {
+      pathLoading.value = false
+    }
+  }
+
+  function clearPath() {
+    pathResult.value = null
+  }
+
   return {
     devices, antennas, cables, channels,
     nodes, selectedNodeId, selectedNode,
@@ -255,5 +305,6 @@ export const useStore = defineStore('main', () => {
     addCustomDevice, updateCustomDevice, deleteCustomDevice,
     networkLinks, linkStartNodeId, loadLinks, createLink, deleteLink,
     deleteAllLinks, analyzeAllLinks, autoDiscoverLinks,
+    pathQuery, pathResult, pathLoading, findPath, clearPath,
   }
 })
