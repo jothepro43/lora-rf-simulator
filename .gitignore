@@ -40,3 +40,6 @@ Thumbs.db
 *.hgt
 *.tif
 !backend/data/*.json
+
+# Claude Code personal settings: may hold API keys and tokens, never commit
+**/.claude/settings.local.json
